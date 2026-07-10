@@ -130,6 +130,46 @@ def test_update_latest_fallback_marker(
     assert resolve_run_dir(runs) == run_dir
 
 
+def test_resolve_run_dir_rejects_escape(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    real = create_run_dir(runs, "real")
+    # A plain single-segment id still resolves.
+    assert resolve_run_dir(runs, real.name) == real
+
+    # Absolute paths, traversal, and multi-segment ids never escape runs_dir.
+    outside = create_run_dir(tmp_path / "other", "victim")
+    assert resolve_run_dir(runs, str(outside)) is None
+    assert resolve_run_dir(runs, "..") is None
+    assert resolve_run_dir(runs, ".") is None
+    assert resolve_run_dir(runs, "../other/victim") is None
+    assert resolve_run_dir(runs, f"sub/{real.name}") is None
+    assert resolve_run_dir(runs, "") is None
+
+
+def test_resolve_run_dir_rejects_symlinked_run_id(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    outside = create_run_dir(tmp_path / "other", "victim")
+    evil = runs / "evil"
+    try:
+        evil.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+    # list_run_dirs already skips symlinks; resolve_run_dir must too.
+    assert evil.is_dir()  # dangling check: it does resolve to a dir
+    assert resolve_run_dir(runs, "evil") is None
+    assert evil not in list_run_dirs(runs)
+
+
+def test_resolve_run_dir_marker_cannot_escape(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    outside = create_run_dir(tmp_path / "other", "victim")
+    # A tampered LATEST marker pointing outside the runs root is refused.
+    (runs / LATEST_FILE).write_text(f"../other/{outside.name}\n", encoding="utf-8")
+    assert resolve_run_dir(runs) is None
+
+
 def test_list_and_prune(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     assert list_run_dirs(runs) == []

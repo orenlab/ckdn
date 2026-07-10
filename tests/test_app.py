@@ -27,7 +27,7 @@ from ckdn.app import (
 )
 from ckdn.config import load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
-from ckdn.runner import LOG_NAME, create_run_dir, update_latest
+from ckdn.runner import LOG_NAME, create_run_dir, resolve_run_dir, update_latest
 
 
 def _write_cfg(tmp_path: Path, body: str) -> Path:
@@ -134,6 +134,123 @@ def test_evidence_rejects_path_escape(tmp_path: Path) -> None:
         get_evidence(cfg, artifact="/etc/passwd")
     with pytest.raises(ArtifactError):
         get_evidence(cfg, artifact="missing.json")
+
+
+def test_read_path_rejects_escaping_run(tmp_path: Path) -> None:
+    cfg = load_config(
+        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    )
+    run_one(cfg, cfg.checks["ok"], extra=[])
+    # A sibling run dir outside runs_dir that must stay unreachable via MCP.
+    outside = tmp_path / "victim" / "run"
+    outside.mkdir(parents=True)
+    (outside / DIGEST_NAME).write_text('{"check": "secret"}', encoding="utf-8")
+    (outside / LOG_NAME).write_text("TOP_SECRET\n", encoding="utf-8")
+
+    for bad in (str(outside), "..", ".", "../victim/run", "sub/run"):
+        with pytest.raises(RunNotFoundError):
+            get_digest(cfg, bad)
+        with pytest.raises(RunNotFoundError):
+            get_evidence(cfg, ref=bad)
+        with pytest.raises(RunNotFoundError):
+            get_evidence(cfg, ref=bad, artifact=LOG_NAME)
+
+
+def test_read_path_rejects_symlinked_run(tmp_path: Path) -> None:
+    cfg = load_config(
+        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    )
+    run_one(cfg, cfg.checks["ok"], extra=[])
+    outside = tmp_path / "victim"
+    outside.mkdir()
+    (outside / DIGEST_NAME).write_text('{"check": "secret"}', encoding="utf-8")
+    (outside / LOG_NAME).write_text("TOP_SECRET\n", encoding="utf-8")
+    evil = cfg.runs_dir / "evil"
+    try:
+        evil.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+    with pytest.raises(RunNotFoundError):
+        get_digest(cfg, "evil")
+    with pytest.raises(RunNotFoundError):
+        get_evidence(cfg, ref="evil", artifact=LOG_NAME)
+
+
+def test_evidence_digest_bound_to_run_dir(tmp_path: Path) -> None:
+    """The digest is read from the resolved run dir, never a same-named decoy."""
+    cfg = load_config(
+        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    )
+    run_one(cfg, cfg.checks["ok"], extra=[])  # latest → check "ok"
+    decoy = create_run_dir(cfg.runs_dir, "decoy")
+    (decoy / DIGEST_NAME).write_text(
+        '{"schema": "ckdn.digest/2", "check": "decoy", '
+        '"status": "pass", "rc": 0, "run_dir": "decoy"}',
+        encoding="utf-8",
+    )
+    (decoy / LOG_NAME).write_text("decoy body\n", encoding="utf-8")
+    ev = get_evidence(cfg, ref=decoy.name, artifact=LOG_NAME)
+    assert ev["run_id"] == decoy.name
+    assert ev["check"] == "decoy"  # digest came from decoy, not from latest
+    assert ev["artifact"]["lines"] == ["decoy body"]
+
+
+def test_evidence_streaming_slice_bounds(tmp_path: Path) -> None:
+    cfg = load_config(
+        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    )
+    run_one(cfg, cfg.checks["ok"], extra=[])
+    run_dir = resolve_run_dir(cfg.runs_dir, None)
+    assert run_dir is not None
+    (run_dir / LOG_NAME).write_text(
+        "".join(f"line{i}\n" for i in range(50)), encoding="utf-8"
+    )
+    mid = get_evidence(cfg, artifact=LOG_NAME, offset=10, limit=5)["artifact"]
+    assert mid["total_lines"] == 50
+    assert mid["lines"] == [f"line{i}" for i in range(10, 15)]
+    assert mid["truncated"] is True
+
+    tail = get_evidence(cfg, artifact=LOG_NAME, offset=48, limit=10)["artifact"]
+    assert tail["lines"] == ["line48", "line49"]
+    assert tail["truncated"] is False
+
+
+def test_slice_artifact_lines_edges_and_cap(tmp_path: Path) -> None:
+    from ckdn.app.queries import _MAX_EVIDENCE_LINE_BYTES, _slice_artifact_lines
+
+    p = tmp_path / "a.log"
+    # CRLF + LF, no trailing newline.
+    p.write_bytes(b"a\r\nb\nc")
+    assert _slice_artifact_lines(p, 0, 10) == (["a", "b", "c"], 3)
+    # Empty file → no lines.
+    p.write_bytes(b"")
+    assert _slice_artifact_lines(p, 0, 10) == ([], 0)
+    # Trailing newline does not fabricate an extra line.
+    p.write_bytes(b"x\ny\n")
+    assert _slice_artifact_lines(p, 0, 10) == (["x", "y"], 2)
+    # A lone blank line is one empty line.
+    p.write_bytes(b"\n")
+    assert _slice_artifact_lines(p, 0, 10) == ([""], 1)
+    # A single unbounded line is length-capped, not loaded whole.
+    p.write_bytes(b"z" * (_MAX_EVIDENCE_LINE_BYTES + 5000))
+    lines, total = _slice_artifact_lines(p, 0, 10)
+    assert total == 1
+    assert len(lines[0]) == _MAX_EVIDENCE_LINE_BYTES
+
+
+def test_list_runs_limit_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ckdn.app import queries as q
+
+    cfg = load_config(
+        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    )
+    for _ in range(4):
+        run_one(cfg, cfg.checks["ok"], extra=[])
+    monkeypatch.setattr(q, "MAX_LIST_RUNS_LIMIT", 2)
+    assert len(list_runs(cfg, limit=10_000)) == 2  # clamped to the cap
+    assert list_runs(cfg, limit=0) == []  # zero means none, not everything
 
 
 def test_get_digest_missing_run(tmp_path: Path) -> None:

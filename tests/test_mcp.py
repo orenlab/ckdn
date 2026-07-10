@@ -176,15 +176,33 @@ def test_server_context_env_and_load_error(
 def test_mcp_main_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from ckdn.mcp import server as server_mod
 
-    calls: list[object] = []
+    calls: list[dict[str, object]] = []
 
     class _Fake:
-        def run(self) -> None:
-            calls.append(True)
+        def run(self, **kwargs: object) -> None:
+            calls.append(kwargs)
 
     monkeypatch.setattr(server_mod, "create_server", lambda config=None: _Fake())
     server_mod.main(["--config", str(tmp_path / "ckdn.toml")])
-    assert calls == [True]
+    assert len(calls) == 1
+
+
+def test_mcp_main_pins_stdio_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``ckdn-mcp`` must always run stdio, ignoring FASTMCP_TRANSPORT."""
+    from ckdn.mcp import server as server_mod
+
+    seen: list[object] = []
+
+    class _Fake:
+        def run(self, *, transport: object = None, **kwargs: object) -> None:
+            seen.append(transport)
+
+    monkeypatch.setenv("FASTMCP_TRANSPORT", "http")
+    monkeypatch.setattr(server_mod, "create_server", lambda config=None: _Fake())
+    server_mod.main([])
+    assert seen == ["stdio"]
 
 
 @pytest.mark.asyncio

@@ -118,19 +118,46 @@ def update_latest(runs_dir: Path, run_dir: Path) -> None:
         (runs_dir / LATEST_FILE).write_text(run_dir.name + "\n", encoding="utf-8")
 
 
+def _contained_run(runs_dir: Path, name: str) -> Path | None:
+    """Resolve ``name`` to a real directory strictly inside ``runs_dir``.
+
+    A run id must be a single, non-traversing path segment naming a real
+    directory (not a symlink) that resolves under ``runs_dir``. Anything else
+    -- absolute paths, ``..``/``.``, multi-segment names, symlinked entries, or
+    targets that escape the runs root -- resolves to ``None`` so the caller
+    reports it as "no matching run" rather than reading outside the boundary.
+    """
+    if not name:
+        return None
+    ref_path = Path(name)
+    if ref_path.is_absolute() or len(ref_path.parts) != 1 or name in {".", ".."}:
+        return None
+    candidate = runs_dir / name
+    if candidate.is_symlink() or not candidate.is_dir():
+        return None
+    if not candidate.resolve().is_relative_to(runs_dir.resolve()):
+        return None
+    return candidate
+
+
 def resolve_run_dir(runs_dir: Path, ref: str | None = None) -> Path | None:
-    """Resolve a run reference (directory name or None for latest)."""
+    """Resolve a run reference (directory name or None for latest).
+
+    Returns ``None`` for missing runs and for any reference that would escape
+    ``runs_dir`` (see :func:`_contained_run`); the read-side maps that to a
+    ``RunNotFoundError`` / MCP ``isError``.
+    """
     if ref:
-        candidate = runs_dir / ref
-        return candidate if candidate.is_dir() else None
+        return _contained_run(runs_dir, ref)
     link = runs_dir / LATEST_LINK
     if link.is_dir():
-        return link.resolve()
+        target = link.resolve()
+        if target.is_relative_to(runs_dir.resolve()):
+            return target
+        return None
     marker = runs_dir / LATEST_FILE
     if marker.is_file():
-        candidate = runs_dir / marker.read_text(encoding="utf-8").strip()
-        if candidate.is_dir():
-            return candidate
+        return _contained_run(runs_dir, marker.read_text(encoding="utf-8").strip())
     return None
 
 

@@ -54,7 +54,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     config = Path(args.config) if args.config else None
-    create_server(config=config).run()
+    # Pin the transport: ``ckdn-mcp`` is a stdio entry point only. Passing it
+    # explicitly overrides any FASTMCP_TRANSPORT env default, so this process
+    # can never be flipped into an unauthenticated HTTP listener.
+    create_server(config=config).run(transport="stdio")
 
 
 if __name__ == "__main__":

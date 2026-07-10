@@ -15,6 +15,13 @@ from ckdn.runner import LOG_NAME, list_run_dirs, resolve_run_dir
 
 DEFAULT_EVIDENCE_LIMIT = 200
 MAX_EVIDENCE_LIMIT = 2000
+MAX_LIST_RUNS_LIMIT = 500
+
+# Streaming artifact reads: never hold the whole file in memory. Scan in fixed
+# chunks and cap the bytes retained per returned line so a single pathological
+# (e.g. newline-free) artifact cannot exhaust memory via get_evidence.
+_EVIDENCE_READ_CHUNK = 1 << 16  # 64 KiB
+_MAX_EVIDENCE_LINE_BYTES = 64 << 10  # 64 KiB per returned line
 
 _DIGEST_EVIDENCE_KEYS = (
     "findings",
@@ -58,11 +65,12 @@ def list_checks(cfg: Config) -> list[dict[str, Any]]:
     return out
 
 
-def get_digest(cfg: Config, ref: str | None = None) -> dict[str, Any]:
-    """Load ``digest.json`` for ``ref`` or the latest run."""
-    run_dir = resolve_run_dir(cfg.runs_dir, ref)
-    if run_dir is None:
-        raise RunNotFoundError("no matching run found (nothing has been run yet?)")
+def _load_digest(run_dir: Path) -> dict[str, Any]:
+    """Load and validate ``digest.json`` from an already-resolved run dir.
+
+    Reading is anchored to ``run_dir`` itself -- never re-resolved by basename
+    -- so a run's digest can never be paired with another run's artifacts.
+    """
     digest_path = run_dir / DIGEST_NAME
     if not digest_path.exists():
         raise DigestError(f"run {run_dir.name} has no {DIGEST_NAME}")
@@ -75,10 +83,18 @@ def get_digest(cfg: Config, ref: str | None = None) -> dict[str, Any]:
     return doc
 
 
+def get_digest(cfg: Config, ref: str | None = None) -> dict[str, Any]:
+    """Load ``digest.json`` for ``ref`` or the latest run."""
+    run_dir = resolve_run_dir(cfg.runs_dir, ref)
+    if run_dir is None:
+        raise RunNotFoundError("no matching run found (nothing has been run yet?)")
+    return _load_digest(run_dir)
+
+
 def list_runs(cfg: Config, *, limit: int = 10) -> list[dict[str, Any]]:
     """Return recent run summaries (oldest→newest within the window)."""
-    n = max(0, limit)
-    dirs = list_run_dirs(cfg.runs_dir)[-n:]
+    n = min(max(0, limit), MAX_LIST_RUNS_LIMIT)
+    dirs = list_run_dirs(cfg.runs_dir)[-n:] if n else []
     rows: list[dict[str, Any]] = []
     for run_dir in dirs:
         row: dict[str, Any] = {"run_id": run_dir.name, "check": "?", "status": "?"}
@@ -147,7 +163,7 @@ def get_evidence(
     if run_dir is None:
         raise RunNotFoundError("no matching run found (nothing has been run yet?)")
 
-    digest = get_digest(cfg, run_dir.name)
+    digest = _load_digest(run_dir)
     payload: dict[str, Any] = {
         "run_id": run_dir.name,
         "check": digest.get("check"),
@@ -176,15 +192,63 @@ def get_evidence(
     line_offset = max(0, offset)
     line_limit = min(max(1, limit), MAX_EVIDENCE_LIMIT)
     path = _safe_artifact_path(run_dir, artifact)
-    text = path.read_text(encoding="utf-8", errors="replace")
-    lines = text.splitlines()
-    sliced = lines[line_offset : line_offset + line_limit]
+    sliced, total_lines = _slice_artifact_lines(path, line_offset, line_limit)
     payload["artifact"] = {
         "name": artifact,
         "offset": line_offset,
         "limit": line_limit,
-        "total_lines": len(lines),
-        "truncated": line_offset + line_limit < len(lines),
+        "total_lines": total_lines,
+        "truncated": line_offset + line_limit < total_lines,
         "lines": sliced,
     }
     return payload
+
+
+def _slice_artifact_lines(path: Path, offset: int, limit: int) -> tuple[list[str], int]:
+    """Stream ``path`` and return ``(window, total_lines)``.
+
+    Only the ``[offset, offset + limit)`` window is retained, and each retained
+    line is capped at ``_MAX_EVIDENCE_LINE_BYTES``, so neither a huge file nor a
+    single unbounded line can be pulled into memory in full. Line splitting
+    matches ``str.splitlines`` for ``\\n`` (and trims a trailing ``\\r`` so CRLF
+    logs read cleanly).
+    """
+    end = offset + limit
+    window: list[bytes] = []
+    total = 0
+    idx = 0
+    cur = bytearray()
+    line_nonempty = False
+    keeping = offset <= idx < end
+
+    with path.open("rb") as fh:
+        while chunk := fh.read(_EVIDENCE_READ_CHUNK):
+            pos = 0
+            size = len(chunk)
+            while pos < size:
+                nl = chunk.find(b"\n", pos)
+                seg_end = size if nl == -1 else nl
+                if seg_end > pos:
+                    line_nonempty = True
+                    if keeping and len(cur) < _MAX_EVIDENCE_LINE_BYTES:
+                        room = _MAX_EVIDENCE_LINE_BYTES - len(cur)
+                        cur += chunk[pos : min(seg_end, pos + room)]
+                if nl == -1:
+                    break
+                total += 1
+                if keeping:
+                    window.append(bytes(cur))
+                idx += 1
+                cur = bytearray()
+                line_nonempty = False
+                keeping = offset <= idx < end
+                pos = nl + 1
+
+    # A trailing segment with no terminating newline is a final line.
+    if line_nonempty:
+        total += 1
+        if keeping:
+            window.append(bytes(cur))
+
+    decoded = [b.decode("utf-8", errors="replace").removesuffix("\r") for b in window]
+    return decoded, total
