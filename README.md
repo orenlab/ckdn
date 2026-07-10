@@ -54,13 +54,19 @@ Every check goes through one orchestrator that:
 3. emits a **bounded, machine-readable digest** — the only thing the agent
    is supposed to read.
 
-```
-agent ──> ckdn run coverage ──> subprocess (owns exit code)
-                                 ├── .agent-runs/<ts>-coverage/full.log
-                                 ├── .agent-runs/<ts>-coverage/coverage.xml
-                                 ├── .agent-runs/<ts>-coverage/meta.json
-                                 └── .agent-runs/<ts>-coverage/digest.json   ← agent reads this
-```
+<div align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="https://raw.githubusercontent.com/orenlab/ckdn/refs/heads/main/assets/ckdn-pipeline-dark.svg"
+    >
+    <img
+      alt="ckdn pipeline: agent → ckdn run coverage → subprocess (owns exit code) → .agent-runs artifacts; agent reads digest.json"
+      src="https://raw.githubusercontent.com/orenlab/ckdn/refs/heads/main/assets/ckdn-pipeline.svg"
+      width="680"
+    >
+  </picture>
+</div>
 
 Runtime: Python ≥ 3.11, **stdlib only** (zero third-party dependencies).
 

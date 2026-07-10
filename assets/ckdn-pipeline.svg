@@ -1,0 +1,61 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+SPDX-License-Identifier: MIT
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 360" fill="none" role="img" aria-label="ckdn pipeline: agent runs a check through ckdn, which owns the subprocess exit code and writes run artifacts; the agent reads only digest.json">
+  <title>ckdn pipeline</title>
+  <desc>
+    agent calls ckdn run coverage, which starts a subprocess that owns the exit code
+    and writes full.log, coverage.xml, meta.json, and digest.json under .agent-runs.
+    The agent reads digest.json.
+  </desc>
+
+  <rect x="0" y="0" width="680" height="360" rx="16" fill="#0f1a17" opacity="0.04"/>
+
+  <g font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace">
+    <rect x="24" y="28" width="112" height="56" rx="12" fill="#ffffff" stroke="#0f1a17" stroke-width="1.5"/>
+    <text x="80" y="56" text-anchor="middle" dominant-baseline="central" font-size="15" font-weight="700" fill="#0f1a17">agent</text>
+
+    <path d="M144 56 H176" stroke="#1f8f5a" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M170 50 L180 56 L170 62" fill="none" stroke="#1f8f5a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="188" y="28" width="220" height="56" rx="12" fill="#0f1a17"/>
+    <text x="298" y="56" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="700">
+      <tspan fill="#e8eee9">ckdn run </tspan><tspan fill="#3dd68c">coverage</tspan>
+    </text>
+
+    <path d="M416 56 H448" stroke="#1f8f5a" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M442 50 L452 56 L442 62" fill="none" stroke="#1f8f5a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="460" y="20" width="196" height="72" rx="12" fill="#ffffff" stroke="#3dd68c" stroke-width="2"/>
+    <text x="558" y="46" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="700" fill="#0f1a17">subprocess</text>
+    <text x="558" y="68" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#1f8f5a">owns exit code</text>
+  </g>
+
+  <path d="M558 92 V118" stroke="#1f8f5a" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M552 112 L558 122 L564 112" fill="none" stroke="#1f8f5a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace">
+    <rect x="24" y="128" width="632" height="208" rx="14" fill="#ffffff" stroke="#0f1a17" stroke-width="1.5"/>
+    <rect x="24" y="128" width="632" height="40" rx="14" fill="#0f1a17"/>
+    <rect x="24" y="152" width="632" height="16" fill="#0f1a17"/>
+    <text x="44" y="148" dominant-baseline="central" font-size="13" font-weight="700" fill="#7ee0b0">.agent-runs/&lt;ts&gt;-coverage/</text>
+
+    <g stroke="#1f8f5a" stroke-width="1.6" opacity="0.55" fill="none">
+      <path d="M56 184 V300"/>
+      <path d="M56 196 H76"/>
+      <path d="M56 228 H76"/>
+      <path d="M56 260 H76"/>
+      <path d="M56 300 H76"/>
+    </g>
+
+    <text x="88" y="200" dominant-baseline="central" font-size="13" fill="#0f1a17">full.log</text>
+    <text x="88" y="232" dominant-baseline="central" font-size="13" fill="#0f1a17">coverage.xml</text>
+    <text x="88" y="264" dominant-baseline="central" font-size="13" fill="#0f1a17">meta.json</text>
+
+    <rect x="76" y="284" width="520" height="36" rx="10" fill="#3dd68c" opacity="0.16"/>
+    <rect x="76" y="284" width="520" height="36" rx="10" stroke="#3dd68c" stroke-width="1.8"/>
+    <text x="88" y="302" dominant-baseline="central" font-size="13" font-weight="700" fill="#0f1a17">digest.json</text>
+    <text x="210" y="302" dominant-baseline="central" font-size="12" fill="#1f8f5a">&#x2190; agent reads this</text>
+  </g>
+</svg>
