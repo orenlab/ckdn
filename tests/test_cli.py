@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -112,9 +113,7 @@ def test_parser_crash_becomes_parse_mismatch(
     assert any("crashed" in n for n in doc.get("notes", []))
 
 
-def test_exec_note_prepended(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_exec_note_prepended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _cfg(
         tmp_path,
         '[check.ok]\ncommand = "true"\nparser = "generic"\n',
@@ -226,15 +225,14 @@ def test_main_broken_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
             return argparse.Namespace(fn=_raising)
 
     monkeypatch.setattr(cli, "build_arg_parser", lambda: _Parser())
-    monkeypatch.setattr(cli.sys.stdout, "close", lambda: None)
+    monkeypatch.setattr(sys.stdout, "close", lambda: None)
     assert cli.main([]) == 0
 
 
 def test_run_one_rejects_alias_as_atomic(tmp_path: Path) -> None:
     cfg_path = _cfg(
         tmp_path,
-        '[check.a]\ncommand = "true"\nparser = "generic"\n'
-        '[check.g]\nmembers = ["a"]\n',
+        '[check.a]\ncommand = "true"\nparser = "generic"\n[check.g]\nmembers = ["a"]\n',
     )
     cfg = load_config(cfg_path)
     alias = cfg.checks["g"]

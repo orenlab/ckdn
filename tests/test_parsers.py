@@ -221,7 +221,7 @@ def test_mypy_json_notes_and_warnings(tmp_path: Path) -> None:
             '{"severity":"warning","code":"unused","message":"warn"}',
             '{"severity":"info","message":"skip"}',
             "not-json",
-            '{bad',
+            "{bad",
         ]
     )
     result = MypyParser().parse(ctx(tmp_path, rc=1, log=log, format="json"))
@@ -315,7 +315,8 @@ def test_pylint_skips_non_dict_messages_and_score_notes(tmp_path: Path) -> None:
     result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
     assert len(result.findings) == 1
     result2 = PylintJsonParser().parse(ctx(tmp_path, rc=1, score_fail_under=9.0))
-    assert any("score" in n.lower() or "gate" in n.lower() for n in result2.notes) or result2.gate_failures or True
+    assert any("score" in n.lower() for n in result2.notes)
+    assert not result2.gate_failures
 
     result = MypyParser().parse(ctx(tmp_path, rc=1, log=MYPY_JSON, format="json"))
     assert result.parser_ok

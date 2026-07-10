@@ -72,10 +72,7 @@ def test_ambiguous_command_and_members(tmp_path: Path) -> None:
         load_config(
             _write(
                 tmp_path,
-                "[check.bad]\n"
-                'command = "true"\n'
-                'parser = "generic"\n'
-                'members = ["x"]\n',
+                '[check.bad]\ncommand = "true"\nparser = "generic"\nmembers = ["x"]\n',
             )
         )
 
@@ -148,10 +145,7 @@ def test_fail_fast_on_atomic_rejected(tmp_path: Path) -> None:
         load_config(
             _write(
                 tmp_path,
-                "[check.a]\n"
-                'command = "true"\n'
-                'parser = "generic"\n'
-                "fail_fast = true\n",
+                '[check.a]\ncommand = "true"\nparser = "generic"\nfail_fast = true\n',
             )
         )
 
@@ -180,8 +174,8 @@ def test_alias_timeout_rejected(tmp_path: Path) -> None:
         load_config(
             _write(
                 tmp_path,
-                "[check.a]\ncommand = \"true\"\nparser = \"generic\"\n"
-                "[check.g]\nmembers = [\"a\"]\ntimeout = 1\n",
+                '[check.a]\ncommand = "true"\nparser = "generic"\n'
+                '[check.g]\nmembers = ["a"]\ntimeout = 1\n',
             )
         )
 
@@ -196,8 +190,8 @@ def test_alias_unexpected_option(tmp_path: Path) -> None:
         load_config(
             _write(
                 tmp_path,
-                "[check.a]\ncommand = \"true\"\nparser = \"generic\"\n"
-                "[check.g]\nmembers = [\"a\"]\ntop = 5\n",
+                '[check.a]\ncommand = "true"\nparser = "generic"\n'
+                '[check.g]\nmembers = ["a"]\ntop = 5\n',
             )
         )
 
@@ -216,7 +210,9 @@ def test_invalid_toml(tmp_path: Path) -> None:
 
 def test_run_not_table(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="\\[run\\] must be a table"):
-        load_config(_write(tmp_path, 'run = "x"\n[check.a]\ncommand="true"\nparser="generic"\n'))
+        load_config(
+            _write(tmp_path, 'run = "x"\n[check.a]\ncommand="true"\nparser="generic"\n')
+        )
 
 
 def test_no_checks(tmp_path: Path) -> None:
@@ -226,7 +222,7 @@ def test_no_checks(tmp_path: Path) -> None:
 
 def test_check_not_table(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="must be a table"):
-        load_config(_write(tmp_path, "[run]\nkeep = 1\n[check]\na = \"hi\"\n"))
+        load_config(_write(tmp_path, '[run]\nkeep = 1\n[check]\na = "hi"\n'))
 
 
 def test_timeout_parsed(tmp_path: Path) -> None:

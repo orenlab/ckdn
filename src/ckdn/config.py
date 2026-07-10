@@ -19,7 +19,7 @@ STARTER_CONFIG = (
     '# ckdn configuration. Docs: see README.md ("Configuration").\n'
     "#\n"
     "# Atomic check: command + parser (+ optional timeout / parser options).\n"
-    "# Alias: members = [\"atomic\", ...] (+ optional fail_fast; default true).\n"
+    '# Alias: members = ["atomic", ...] (+ optional fail_fast; default true).\n'
     "# `{run_dir}` is substituted in commands and artifact path options.\n"
     "# Per-check `top` overrides [run].top for that digest only.\n"
     "\n"
@@ -52,14 +52,15 @@ STARTER_CONFIG = (
     '# junit = "junit.xml"\n'
     "\n"
     "[check.ty]\n"
-    'command = "uvx ty check"\n'
+    'command = "uv run ty check"\n'
     'parser = "ty"\n'
     "# timeout = 60\n"
     "# top = 20\n"
+    "# uses project venv via uv run (same as pre-commit)\n"
     "\n"
     "[check.mypy]\n"
-    'command = "uv run mypy src --output json"\n'
-    '# # command = "uv run mypy src"  # text mode (format = "text")\n'
+    'command = "uv run mypy --output json"\n'
+    '# # command = "uv run mypy"  # text mode (format = "text")\n'
     'parser = "mypy"\n'
     'format = "json"\n'
     "# timeout = 120\n"
@@ -109,7 +110,7 @@ STARTER_CONFIG = (
     "# [check.bandit]\n"
     '# command = "uv run bandit -r src -f json '
     '-o {run_dir}/bandit.json"\n'
-    '# # Filter severity TOOL-SIDE, e.g. --severity-level medium\n'
+    "# # Filter severity TOOL-SIDE, e.g. --severity-level medium\n"
     '# parser = "bandit"\n'
     "# timeout = 120\n"
     "# top = 20\n"
@@ -118,7 +119,7 @@ STARTER_CONFIG = (
     "# [check.pylint]\n"
     '# command = "uv run pylint src '
     '--output-format=json2:{run_dir}/pylint.json"\n'
-    '# # Also recommend --fail-under on the pylint CLI.\n'
+    "# # Also recommend --fail-under on the pylint CLI.\n"
     '# parser = "pylint"\n'
     "# score_fail_under = 8.0\n"
     "# timeout = 180\n"
@@ -218,29 +219,21 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
             "(atomic) or members (alias), not both"
         )
     if not is_alias and not is_atomic:
-        raise ConfigError(
-            f"[check.{name}] requires command and parser, or members"
-        )
+        raise ConfigError(f"[check.{name}] requires command and parser, or members")
 
     if is_alias:
         for key in ("command", "parser", "timeout"):
             if key in raw:
-                raise ConfigError(
-                    f"[check.{name}] alias must not set `{key}`"
-                )
+                raise ConfigError(f"[check.{name}] alias must not set `{key}`")
         members_raw = raw["members"]
         if not isinstance(members_raw, list) or not members_raw:
             raise ConfigError(
                 f"[check.{name}] members must be a non-empty array of check names"
             )
         if not all(isinstance(m, str) and m for m in members_raw):
-            raise ConfigError(
-                f"[check.{name}] members must be non-empty strings"
-            )
+            raise ConfigError(f"[check.{name}] members must be non-empty strings")
         fail_fast = bool(raw.get("fail_fast", True))
-        options = {
-            k: v for k, v in raw.items() if k not in _ALIAS_RESERVED
-        }
+        options = {k: v for k, v in raw.items() if k not in _ALIAS_RESERVED}
         if options:
             raise ConfigError(
                 f"[check.{name}] alias only allows members and fail_fast; "
@@ -257,13 +250,9 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
     if not command or not parser:
         raise ConfigError(f"[check.{name}] requires command and parser")
     if "fail_fast" in raw:
-        raise ConfigError(
-            f"[check.{name}] fail_fast is only valid on aliases"
-        )
+        raise ConfigError(f"[check.{name}] fail_fast is only valid on aliases")
     if "members" in raw:
-        raise ConfigError(
-            f"[check.{name}] members is only valid on aliases"
-        )
+        raise ConfigError(f"[check.{name}] members is only valid on aliases")
     timeout_raw = raw.get("timeout")
     timeout = float(timeout_raw) if timeout_raw is not None else None
     options = {k: v for k, v in raw.items() if k not in _ATOMIC_RESERVED}
@@ -284,9 +273,7 @@ def _validate_aliases(checks: dict[str, CheckConfig]) -> None:
         seen: set[str] = set()
         for member in check.members:
             if member == name:
-                raise ConfigError(
-                    f"[check.{name}] members must not include itself"
-                )
+                raise ConfigError(f"[check.{name}] members must not include itself")
             if member in seen:
                 raise ConfigError(
                     f"[check.{name}] members lists '{member}' more than once"
@@ -295,8 +282,7 @@ def _validate_aliases(checks: dict[str, CheckConfig]) -> None:
             target = checks.get(member)
             if target is None:
                 raise ConfigError(
-                    f"[check.{name}] members references unknown check "
-                    f"'{member}'"
+                    f"[check.{name}] members references unknown check '{member}'"
                 )
             if target.is_alias:
                 raise ConfigError(

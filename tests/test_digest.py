@@ -131,9 +131,7 @@ def test_coverage_pass_keeps_summary() -> None:
 
 
 def test_truncation_counters() -> None:
-    findings = [
-        Finding(id=str(i), kind="k", message="m") for i in range(5)
-    ]
+    findings = [Finding(id=str(i), kind="k", message="m") for i in range(5)]
     digest = build_digest(
         check="ruff",
         status="fail",

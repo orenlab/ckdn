@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from ckdn import runner as runner_mod
 from ckdn.runner import (
     LATEST_FILE,
     LATEST_LINK,
@@ -31,13 +31,14 @@ def test_create_run_dir_collision_suffix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runs = tmp_path / "runs"
+    fixed = dt.datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt.UTC)
 
-    class _Frozen(runner_mod.dt.datetime):
-        @classmethod
-        def now(cls, tz: object = None) -> runner_mod.dt.datetime:
-            return cls(2026, 1, 1, 0, 0, 0, tzinfo=runner_mod.dt.UTC)
+    class _Clock:
+        @staticmethod
+        def now(tz: dt.tzinfo | None = None) -> dt.datetime:
+            return fixed
 
-    monkeypatch.setattr(runner_mod.dt, "datetime", _Frozen)
+    monkeypatch.setattr("ckdn.runner.dt.datetime", _Clock)
     first = create_run_dir(runs, "frozen")
     assert first.name == "20260101T000000Z-frozen"
     second = create_run_dir(runs, "frozen")

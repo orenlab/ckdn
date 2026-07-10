@@ -168,11 +168,11 @@ parser = "coverage"
 fail_under = 96.0
 
 [check.ty]
-command = "uvx ty check"
+command = "uv run ty check"
 parser = "ty"
 
 [check.mypy]
-command = "uv run mypy src --output json"
+command = "uv run mypy --output json"
 parser = "mypy"
 format = "json"
 

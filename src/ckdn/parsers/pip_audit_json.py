@@ -34,9 +34,7 @@ def _vuln_finding(
     detail_lines: list[str] = []
     fix_versions = vuln.get("fix_versions")
     if isinstance(fix_versions, list) and fix_versions:
-        detail_lines.append(
-            "fix_versions: " + ", ".join(str(v) for v in fix_versions)
-        )
+        detail_lines.append("fix_versions: " + ", ".join(str(v) for v in fix_versions))
     aliases = vuln.get("aliases")
     if isinstance(aliases, list) and aliases:
         detail_lines.append("aliases: " + ", ".join(str(a) for a in aliases))

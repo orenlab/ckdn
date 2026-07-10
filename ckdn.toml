@@ -34,14 +34,14 @@ fail_under = 96.0
 # junit = "junit.xml"
 
 [check.ty]
-command = "uvx ty check"
+command = "uv run ty check"
 parser = "ty"
 # timeout = 60
 # top = 20
 
 [check.mypy]
-command = "uv run mypy src --output json"
-# # command = "uv run mypy src"  # text mode (format = "text")
+command = "uv run mypy --output json"
+# # command = "uv run mypy"  # text mode (format = "text")
 parser = "mypy"
 format = "json"
 # timeout = 120
