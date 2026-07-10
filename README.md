@@ -160,6 +160,9 @@ Failure keeps the evidence — bounded findings with locations and
 snippets, gates, notes, explicit truncation counters (shown indented here
 for readability; `ckdn show` does the same for stored digests):
 
+<details>
+<summary>Failure digest — full shape (findings, summary, artifacts)</summary>
+
 ```json
 {
   "schema": "ckdn.digest/2",
@@ -194,6 +197,7 @@ for readability; `ckdn show` does the same for stored digests):
   ]
 }
 ```
+</details>
 
 On `error` / `parse_mismatch` the digest additionally carries a bounded
 `log_tail`.
@@ -208,6 +212,9 @@ An alias groups atomic checks: `ckdn run lint` runs each member in config
 order. Every member gets its **own run directory and digest** — the
 aggregate on stdout is a routing document, not a replacement for member
 evidence:
+
+<details>
+<summary>Aggregate — <code>ckdn.aggregate/1</code> example</summary>
 
 ```json
 {
@@ -229,6 +236,7 @@ evidence:
   ]
 }
 ```
+</details>
 
 The aggregate contract:
 
@@ -251,6 +259,9 @@ Read the aggregate to decide *which* member digest to open
 
 `ckdn.toml` at the project root (`ckdn init`; override with `--config`).
 Excerpt of the starter (the full catalogue is written by `ckdn init`):
+
+<details>
+<summary><code>ckdn.toml</code> — starter excerpt (atomics + aliases)</summary>
 
 ```toml
 [run]
@@ -289,6 +300,7 @@ parser = "ruff"
 members = ["ruff"]               # add pylint / bandit / … when enabled
 # fail_fast = true               # default; false runs all members
 ```
+</details>
 
 **Atomic** check: `command` + `parser` (required), optional `timeout`
 in seconds (a timeout yields `rc=124` and a non-green status). Any other
@@ -394,7 +406,18 @@ uv tool install 'ckdn[mcp]'
 # or in-project: uv add --dev 'ckdn[mcp]'
 ```
 
-Cursor / Claude Desktop (stdio):
+`ckdn-mcp` speaks **stdio** only. Config resolution: `--config` →
+`$CKDN_CONFIG` → `./ckdn.toml` (cwd). Every client shares the schema
+`{ command, args, env }`; only the file name and format differ.
+
+<details>
+<summary><b>Claude Code</b> — <code>.mcp.json</code> (project-scoped, committed)</summary>
+
+```bash
+claude mcp add --scope project ckdn -- ckdn-mcp
+```
+
+or commit a `.mcp.json` at the repo root (Claude Code expands `${VAR}`):
 
 ```json
 {
@@ -403,12 +426,66 @@ Cursor / Claude Desktop (stdio):
       "command": "ckdn-mcp",
       "args": [],
       "env": {
-        "CKDN_CONFIG": "/absolute/path/to/your/ckdn.toml"
+        "CKDN_CONFIG": "${CKDN_CONFIG:-ckdn.toml}"
       }
     }
   }
 }
 ```
+
+</details>
+
+<details>
+<summary><b>Cursor</b> — <code>.cursor/mcp.json</code> (or global <code>~/.cursor/mcp.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "ckdn": {
+      "command": "ckdn-mcp",
+      "args": [],
+      "env": {
+        "CKDN_CONFIG": "/absolute/path/to/ckdn.toml"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Claude Desktop</b> — <code>claude_desktop_config.json</code></summary>
+
+Settings → Developer → Edit Config, same schema:
+
+```json
+{
+  "mcpServers": {
+    "ckdn": {
+      "command": "ckdn-mcp",
+      "args": [],
+      "env": {
+        "CKDN_CONFIG": "/absolute/path/to/ckdn.toml"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>ChatGPT Codex</b> — <code>~/.codex/config.toml</code> (TOML, not JSON)</summary>
+
+```toml
+[mcp_servers.ckdn]
+command = "ckdn-mcp"
+args = []
+env = { CKDN_CONFIG = "/absolute/path/to/ckdn.toml" }
+```
+
+</details>
 
 Tools (thin adapter over the same application layer as the CLI):
 
