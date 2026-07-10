@@ -35,3 +35,22 @@ jobs:
         run: uv run ty check src/ckdn
       - name: Pytest
         run: uv run pytest -q
+
+  codeclone:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Run CodeClone
+        uses: orenlab/codeclone/.github/actions/codeclone@v2.1.0a1
+        with:
+          fail-on-new: "true"
+          sarif: "true"
+          pr-comment: "true"
