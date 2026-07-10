@@ -1,0 +1,16 @@
+.agent-runs/
+__pycache__/
+*.pyc
+dist/
+.venv/
+.codeclone/
+.idea/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+.coverage
+htmlcov/
+build/
+*.whl

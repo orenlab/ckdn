@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+name: Bug report
+description: Something is broken or a digest/status looks wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. For security issues use
+        [Security Advisories](https://github.com/orenlab/ckdn/security/advisories/new)
+        instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong in one or two sentences?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands / ckdn.toml snippets.
+      placeholder: |
+        ckdn init
+        ckdn run lint
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste the compact digest JSON if relevant (redact secrets).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ckdn version
+      placeholder: "ckdn --version"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "python --version"
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, how ckdn was installed (uv tool / path / PYTHONPATH).

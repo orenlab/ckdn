@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/orenlab/ckdn/security/advisories/new
+    about: Report a vulnerability privately (do not file a public issue).
+  - name: Discussions
+    url: https://github.com/orenlab/ckdn/discussions
+    about: Questions and ideas that are not bugs or feature requests.

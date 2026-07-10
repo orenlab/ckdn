@@ -1,0 +1,32 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+SPDX-License-Identifier: MIT
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="ckdn checkdown">
+  <title>ckdn</title>
+  <defs>
+    <linearGradient id="face" x1="16" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1a2e28"/>
+      <stop offset="100%" stop-color="#0f1a17"/>
+    </linearGradient>
+  </defs>
+  <!-- Mark: check that resolves downward into a digest chevron -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#face)"/>
+  <path
+    d="M34 58 L54 78 L94 38"
+    fill="none"
+    stroke="#3dd68c"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M40 92 L64 108 L88 92"
+    fill="none"
+    stroke="#7ee0b0"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.85"
+  />
+</svg>

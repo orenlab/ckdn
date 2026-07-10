@@ -1,0 +1,124 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+[project]
+name = "ckdn"
+version = "1.0.0"
+description = "ckdn (checkdown): deterministic check runner and log digester for AI-assisted development loops"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [
+    { name = "Den Rozhnovskiy", email = "rozhnovskiydenis@gmail.com" },
+]
+keywords = [
+    "ckdn",
+    "checkdown",
+    "ci",
+    "agents",
+    "pytest",
+    "ruff",
+    "digest",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/orenlab/ckdn"
+Repository = "https://github.com/orenlab/ckdn"
+Issues = "https://github.com/orenlab/ckdn/issues"
+Changelog = "https://github.com/orenlab/ckdn/blob/main/CHANGELOG.md"
+Security = "https://github.com/orenlab/ckdn/security/advisories"
+
+[project.scripts]
+ckdn = "ckdn.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=2.2.0",
+    "pytest>=8",
+    "pytest-cov>=6",
+    "ruff>=0.15.21",
+    "ty>=0.0.58",
+    "codeclone[mcp]==2.1.0a1",
+    "pre-commit>=4.6.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ckdn"]
+
+[tool.codeclone]
+baseline = "codeclone.baseline.json"
+min_loc = 4
+min_stmt = 4
+fail_on_new = true
+fail_cycles = true
+fail_dead_code = true
+fail_health = 94
+fail_on_new_metrics = true
+api_surface = true
+min_typing_coverage = 100
+intent_registry_backend = "sqlite"
+intent_registry_path = ".codeclone/db/intents.sqlite3"
+intent_registry_retention_days = 30
+audit_enabled = true
+audit_path = ".codeclone/db/audit.sqlite3"
+audit_payloads = "full"    # "off" | "compact" | "full"
+audit_retention_days = 30
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_return_any = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+files = ["src/ckdn", "tests"]
+exclude = [
+    "^build/",
+    "^site/",
+    "^plugins/cursor-codeclone/scripts/launch_mcp\\.py$",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PIE", "PERF", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.coverage.run]
+source = ["ckdn"]
+branch = false
+omit = ["*/ckdn/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 96
+show_missing = true
+skip_covered = true

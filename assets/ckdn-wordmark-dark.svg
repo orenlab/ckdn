@@ -1,0 +1,36 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+SPDX-License-Identifier: MIT
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 60" fill="none" role="img" aria-label="ckdn">
+  <title>ckdn</title>
+  <rect x="14" y="6" width="36" height="36" rx="10" fill="#3dd68c" opacity="0.18"/>
+  <rect x="8" y="12" width="36" height="36" rx="10" fill="#1a2e28"/>
+  <path
+    d="M18 30 L25 37 L38 22"
+    fill="none"
+    stroke="#3dd68c"
+    stroke-width="3.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M19 40 L26 45 L33 40"
+    fill="none"
+    stroke="#7ee0b0"
+    stroke-width="2.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.9"
+  />
+  <text
+    x="56"
+    y="32"
+    font-family="'JetBrains Mono', ui-monospace, monospace"
+    font-size="28"
+    font-weight="700"
+    dominant-baseline="central"
+  >
+    <tspan fill="#e8eee9">ck</tspan><tspan fill="#3dd68c">dn</tspan>
+  </text>
+</svg>

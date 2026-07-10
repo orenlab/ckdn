@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+name: Feature request
+description: Propose a parser, alias behavior, or CLI improvement
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What gap does this fill for agent / CI loops?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Desired behavior, config shape, and non-goals if any.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds today (generic parser, external script, …).
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints you accept
+      options:
+        - label: Stdlib-only runtime (no new published dependencies)
+          required: true
+        - label: Digests stay sparse (ckdn.digest/2 omit-empty rules)
+          required: true
+        - label: Parsers report facts; reconcile owns status
+          required: true

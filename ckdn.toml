@@ -1,0 +1,134 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+# ckdn configuration. Docs: see README.md ("Configuration").
+#
+# Atomic check: command + parser (+ optional timeout / parser options).
+# Alias: members = ["atomic", ...] (+ optional fail_fast; default true).
+# `{run_dir}` is substituted in commands and artifact path options.
+# Per-check `top` overrides [run].top for that digest only.
+
+[run]
+runs_dir = ".agent-runs"   # where run artifacts live (add to .gitignore)
+keep = 20                  # prune old run directories beyond this count
+top = 20                   # max findings / top entries in a digest
+max_snippet_lines = 12     # max detail lines per finding
+log_tail_lines = 40        # log tail size on error / parse_mismatch
+
+# --- enabled -------------------------------------------------------
+
+[check.pytest]
+command = "uv run pytest -q --junitxml {run_dir}/junit.xml"
+parser = "pytest"
+# timeout = 60
+# top = 20
+# junit = "junit.xml"      # artifact path (default); may use {run_dir}
+
+[check.coverage]
+command = "uv run pytest -q --junitxml {run_dir}/junit.xml --cov=src --cov-report=term-missing --cov-report=xml:{run_dir}/coverage.xml"
+parser = "coverage"
+fail_under = 96.0
+# missing_lines_preview = 40
+# timeout = 120
+# top = 20
+# coverage_xml = "coverage.xml"
+# junit = "junit.xml"
+
+[check.ty]
+command = "uvx ty check"
+parser = "ty"
+# timeout = 60
+# top = 20
+
+[check.mypy]
+command = "uv run mypy src --output json"
+# # command = "uv run mypy src"  # text mode (format = "text")
+parser = "mypy"
+format = "json"
+# timeout = 120
+# top = 20
+
+[check.types]
+members = ["ty", "mypy"]
+# fail_fast = false         # default true; false runs all members
+# # members = ["ty", "mypy", "pyright"]  # after enabling pyright
+
+[check.ruff]
+command = "uv run ruff check --output-format json --output-file {run_dir}/ruff.json ."
+parser = "ruff"
+# timeout = 60
+# top = 20
+# report = "ruff.json"
+
+[check.lint]
+members = ["ruff"]
+# fail_fast = false
+# # members = ["ruff", "pylint", "bandit"]
+
+# --- optional parsers (uncomment to enable) -----------------------
+
+# [check.pyright]
+# command = "uvx pyright --outputjson"
+# parser = "pyright"
+# timeout = 120
+# top = 20
+
+# [check.format]
+# command = "uv run ruff format --check ."
+# # command = "uv run black --check src tests"
+# parser = "reformat"
+# timeout = 60
+# top = 20
+
+# [check.pip_audit]
+# command = "uv run pip-audit --progress-spinner off -f json -o {run_dir}/pip-audit.json"
+# parser = "pip_audit"
+# timeout = 120
+# top = 20
+# report = "pip-audit.json"
+
+# [check.bandit]
+# command = "uv run bandit -r src -f json -o {run_dir}/bandit.json"
+# # Filter severity TOOL-SIDE, e.g. --severity-level medium
+# parser = "bandit"
+# timeout = 120
+# top = 20
+# report = "bandit.json"
+
+# [check.pylint]
+# command = "uv run pylint src --output-format=json2:{run_dir}/pylint.json"
+# # Also recommend --fail-under on the pylint CLI.
+# parser = "pylint"
+# score_fail_under = 8.0
+# timeout = 180
+# top = 20
+# report = "pylint.json"
+
+# [check.sarif]
+# command = "uvx semgrep scan --config auto --sarif-output {run_dir}/report.sarif ."
+# parser = "sarif"
+# fail_levels = ["error"]   # add "warning" if tool exits nonzero on warnings
+# timeout = 300
+# top = 20
+# report = "report.sarif"
+
+# --- recipes (generic parser; exit-code only) ---------------------
+
+# [check.docs]
+# command = "uv run sphinx-build -W --keep-going -b html docs {run_dir}/docs-build"
+# parser = "generic"
+# timeout = 300
+
+# [check.build]
+# command = "uv build"
+# parser = "generic"
+# timeout = 300
+
+# [check.twine]
+# command = "uvx twine check dist/*"
+# parser = "generic"
+# timeout = 60
+
+# [check.pip_check]
+# command = "uv run pip check"
+# parser = "generic"
+# timeout = 60

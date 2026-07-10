@@ -1,0 +1,1400 @@
+{
+  "meta": {
+    "generator": {
+      "name": "codeclone",
+      "version": "2.1.0a1"
+    },
+    "schema_version": "2.1",
+    "fingerprint_version": "1",
+    "python_tag": "cp314",
+    "created_at": "2026-07-10T13:24:01Z",
+    "payload_sha256": "a2e5e3ac672ddbc7ba95c3a9608257727a01480ef343bc6a70c168fc9355e99a",
+    "metrics_payload_sha256": "a954ae1b3d5e2d81272d20dabdf1735d3cfca6618a7523aea9afceedc7f41044",
+    "api_surface_payload_sha256": "93b1f3563d142d99eb87c187c3a4f095ff437ba4990ead49bcca3ae379d1eb1b"
+  },
+  "clones": {
+    "functions": [],
+    "blocks": []
+  },
+  "metrics": {
+    "max_complexity": 12,
+    "high_risk_functions": [],
+    "max_coupling": 2,
+    "high_coupling_classes": [],
+    "max_cohesion": 1,
+    "low_cohesion_classes": [],
+    "dependency_cycles": [],
+    "dependency_max_depth": 1,
+    "dead_code_items": [],
+    "health_score": 94,
+    "health_grade": "A",
+    "typing_param_permille": 1000,
+    "typing_return_permille": 1000,
+    "docstring_permille": 261,
+    "typing_any_count": 8
+  },
+  "api_surface": {
+    "modules": [
+      {
+        "module": "src.ckdn",
+        "filepath": "src/ckdn/__init__.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "DIGEST_SCHEMA",
+            "kind": "constant",
+            "start_line": 7,
+            "end_line": 7,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "META_SCHEMA",
+            "kind": "constant",
+            "start_line": 10,
+            "end_line": 10,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.cli",
+        "filepath": "src/ckdn/cli.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "build_arg_parser",
+            "kind": "function",
+            "start_line": 186,
+            "end_line": 231,
+            "params": [],
+            "returns_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='ArgumentParser', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "cmd_checks",
+            "kind": "function",
+            "start_line": 161,
+            "end_line": 166,
+            "params": [
+              {
+                "name": "args",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='Namespace', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "cmd_gc",
+            "kind": "function",
+            "start_line": 169,
+            "end_line": 173,
+            "params": [
+              {
+                "name": "args",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='Namespace', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "cmd_init",
+            "kind": "function",
+            "start_line": 176,
+            "end_line": 183,
+            "params": [
+              {
+                "name": "args",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='Namespace', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "cmd_list",
+            "kind": "function",
+            "start_line": 144,
+            "end_line": 158,
+            "params": [
+              {
+                "name": "args",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='Namespace', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "cmd_run",
+            "kind": "function",
+            "start_line": 61,
+            "end_line": 129,
+            "params": [
+              {
+                "name": "args",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='Namespace', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "cmd_show",
+            "kind": "function",
+            "start_line": 132,
+            "end_line": 141,
+            "params": [
+              {
+                "name": "args",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Attribute(value=Name(id='argparse', ctx=Load()), attr='Namespace', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "main",
+            "kind": "function",
+            "start_line": 234,
+            "end_line": 254,
+            "params": [
+              {
+                "name": "argv",
+                "kind": "pos_or_kw",
+                "has_default": true,
+                "annotation_hash": "BinOp(left=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None))"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.config",
+        "filepath": "src/ckdn/config.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "CONFIG_NAME",
+            "kind": "constant",
+            "start_line": 10,
+            "end_line": 10,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "CheckConfig",
+            "kind": "class",
+            "start_line": 71,
+            "end_line": 76,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "Config",
+            "kind": "class",
+            "start_line": 80,
+            "end_line": 88,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "Config.runs_dir",
+            "kind": "method",
+            "start_line": 86,
+            "end_line": 88,
+            "params": [],
+            "returns_hash": "Name(id='Path', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "ConfigError",
+            "kind": "class",
+            "start_line": 57,
+            "end_line": 58,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "RunSettings",
+            "kind": "class",
+            "start_line": 62,
+            "end_line": 67,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "STARTER_CONFIG",
+            "kind": "constant",
+            "start_line": 15,
+            "end_line": 54,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "load_config",
+            "kind": "function",
+            "start_line": 91,
+            "end_line": 132,
+            "params": [
+              {
+                "name": "path",
+                "kind": "pos_or_kw",
+                "has_default": true,
+                "annotation_hash": "BinOp(left=Name(id='Path', ctx=Load()), op=BitOr(), right=Constant(value=None))"
+              }
+            ],
+            "returns_hash": "Name(id='Config', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.digest",
+        "filepath": "src/ckdn/digest.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "DIGEST_NAME",
+            "kind": "constant",
+            "start_line": 26,
+            "end_line": 26,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "META_NAME",
+            "kind": "constant",
+            "start_line": 27,
+            "end_line": 27,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "build_digest",
+            "kind": "function",
+            "start_line": 40,
+            "end_line": 72,
+            "params": [
+              {
+                "name": "check",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "status",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "reason",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "outcome",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='RunOutcome', ctx=Load())"
+              },
+              {
+                "name": "result",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseResult', ctx=Load())"
+              },
+              {
+                "name": "run_dir_rel",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "top",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              },
+              {
+                "name": "include_tail",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='bool', ctx=Load())"
+              },
+              {
+                "name": "tail_lines",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              },
+              {
+                "name": "artifacts",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "build_meta",
+            "kind": "function",
+            "start_line": 75,
+            "end_line": 89,
+            "params": [
+              {
+                "name": "check",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "parser",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "outcome",
+                "kind": "kw_only",
+                "has_default": false,
+                "annotation_hash": "Name(id='RunOutcome', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "dump_json",
+            "kind": "function",
+            "start_line": 30,
+            "end_line": 31,
+            "params": [
+              {
+                "name": "data",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='str', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "list_artifacts",
+            "kind": "function",
+            "start_line": 99,
+            "end_line": 106,
+            "params": [
+              {
+                "name": "run_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "tail",
+            "kind": "function",
+            "start_line": 34,
+            "end_line": 37,
+            "params": [
+              {
+                "name": "text",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "n",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "write_documents",
+            "kind": "function",
+            "start_line": 92,
+            "end_line": 96,
+            "params": [
+              {
+                "name": "run_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "digest",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load())"
+              },
+              {
+                "name": "meta",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers",
+        "filepath": "src/ckdn/parsers/__init__.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "available_parsers",
+            "kind": "function",
+            "start_line": 29,
+            "end_line": 30,
+            "params": [],
+            "returns_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "get_parser",
+            "kind": "function",
+            "start_line": 25,
+            "end_line": 26,
+            "params": [
+              {
+                "name": "name",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              }
+            ],
+            "returns_hash": "BinOp(left=Name(id='Parser', ctx=Load()), op=BitOr(), right=Constant(value=None))",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers.base",
+        "filepath": "src/ckdn/parsers/base.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "Finding",
+            "kind": "class",
+            "start_line": 28,
+            "end_line": 44,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "Finding.to_dict",
+            "kind": "method",
+            "start_line": 37,
+            "end_line": 44,
+            "params": [],
+            "returns_hash": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "ParseContext",
+            "kind": "class",
+            "start_line": 68,
+            "end_line": 88,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "ParseContext.artifact",
+            "kind": "method",
+            "start_line": 78,
+            "end_line": 88,
+            "params": [
+              {
+                "name": "key",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "default",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='Path', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "ParseResult",
+            "kind": "class",
+            "start_line": 48,
+            "end_line": 64,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "Parser",
+            "kind": "class",
+            "start_line": 91,
+            "end_line": 96,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "Parser.parse",
+            "kind": "method",
+            "start_line": 96,
+            "end_line": 96,
+            "params": [
+              {
+                "name": "ctx",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseContext', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "clamp",
+            "kind": "function",
+            "start_line": 99,
+            "end_line": 105,
+            "params": [
+              {
+                "name": "lines",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())"
+              },
+              {
+                "name": "limit",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers.coverage_xml",
+        "filepath": "src/ckdn/parsers/coverage_xml.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "CoverageXmlParser",
+            "kind": "class",
+            "start_line": 90,
+            "end_line": 158,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "CoverageXmlParser.parse",
+            "kind": "method",
+            "start_line": 93,
+            "end_line": 158,
+            "params": [
+              {
+                "name": "ctx",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseContext', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers.generic",
+        "filepath": "src/ckdn/parsers/generic.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "GenericParser",
+            "kind": "class",
+            "start_line": 13,
+            "end_line": 23,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "GenericParser.parse",
+            "kind": "method",
+            "start_line": 16,
+            "end_line": 23,
+            "params": [
+              {
+                "name": "ctx",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseContext', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers.pytest_junit",
+        "filepath": "src/ckdn/parsers/pytest_junit.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "PytestJUnitParser",
+            "kind": "class",
+            "start_line": 85,
+            "end_line": 103,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "PytestJUnitParser.parse",
+            "kind": "method",
+            "start_line": 88,
+            "end_line": 103,
+            "params": [
+              {
+                "name": "ctx",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseContext', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "parse_junit",
+            "kind": "function",
+            "start_line": 32,
+            "end_line": 82,
+            "params": [
+              {
+                "name": "junit_text",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "max_snippet_lines",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers.ruff_json",
+        "filepath": "src/ckdn/parsers/ruff_json.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "RuffJsonParser",
+            "kind": "class",
+            "start_line": 18,
+            "end_line": 76,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "RuffJsonParser.parse",
+            "kind": "method",
+            "start_line": 21,
+            "end_line": 76,
+            "params": [
+              {
+                "name": "ctx",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseContext', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.parsers.ty_text",
+        "filepath": "src/ckdn/parsers/ty_text.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "TyTextParser",
+            "kind": "class",
+            "start_line": 125,
+            "end_line": 184,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "TyTextParser.parse",
+            "kind": "method",
+            "start_line": 128,
+            "end_line": 159,
+            "params": [
+              {
+                "name": "ctx",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseContext', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseResult', ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.reconcile",
+        "filepath": "src/ckdn/reconcile.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "STATUSES",
+            "kind": "constant",
+            "start_line": 21,
+            "end_line": 21,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "reconcile",
+            "kind": "function",
+            "start_line": 24,
+            "end_line": 70,
+            "params": [
+              {
+                "name": "rc",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              },
+              {
+                "name": "result",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='ParseResult', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load()), Name(id='bool', ctx=Load())], ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "src.ckdn.runner",
+        "filepath": "src/ckdn/runner.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "LATEST_FILE",
+            "kind": "constant",
+            "start_line": 21,
+            "end_line": 21,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "LATEST_LINK",
+            "kind": "constant",
+            "start_line": 20,
+            "end_line": 20,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "LOG_NAME",
+            "kind": "constant",
+            "start_line": 19,
+            "end_line": 19,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "RC_NOT_FOUND",
+            "kind": "constant",
+            "start_line": 24,
+            "end_line": 24,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "RC_TIMEOUT",
+            "kind": "constant",
+            "start_line": 23,
+            "end_line": 23,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "RunOutcome",
+            "kind": "class",
+            "start_line": 28,
+            "end_line": 36,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "build_tokens",
+            "kind": "function",
+            "start_line": 52,
+            "end_line": 54,
+            "params": [
+              {
+                "name": "command",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "run_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "extra",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "create_run_dir",
+            "kind": "function",
+            "start_line": 39,
+            "end_line": 49,
+            "params": [
+              {
+                "name": "runs_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "check",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='Path', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "execute",
+            "kind": "function",
+            "start_line": 57,
+            "end_line": 104,
+            "params": [
+              {
+                "name": "tokens",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())"
+              },
+              {
+                "name": "cwd",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "run_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "timeout",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "BinOp(left=Name(id='float', ctx=Load()), op=BitOr(), right=Constant(value=None))"
+              }
+            ],
+            "returns_hash": "Name(id='RunOutcome', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "list_run_dirs",
+            "kind": "function",
+            "start_line": 135,
+            "end_line": 138,
+            "params": [
+              {
+                "name": "runs_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='Path', ctx=Load()), ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "prune",
+            "kind": "function",
+            "start_line": 141,
+            "end_line": 150,
+            "params": [
+              {
+                "name": "runs_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "keep",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='int', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "resolve_run_dir",
+            "kind": "function",
+            "start_line": 119,
+            "end_line": 132,
+            "params": [
+              {
+                "name": "runs_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "ref",
+                "kind": "pos_or_kw",
+                "has_default": true,
+                "annotation_hash": "BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))"
+              }
+            ],
+            "returns_hash": "BinOp(left=Name(id='Path', ctx=Load()), op=BitOr(), right=Constant(value=None))",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "update_latest",
+            "kind": "function",
+            "start_line": 107,
+            "end_line": 116,
+            "params": [
+              {
+                "name": "runs_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "run_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "tests.test_parsers",
+        "filepath": "tests/test_parsers.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "COVERAGE_XML",
+            "kind": "constant",
+            "start_line": 29,
+            "end_line": 44,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "JUNIT_ONE_FAILURE",
+            "kind": "constant",
+            "start_line": 12,
+            "end_line": 27,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "RUFF_JSON",
+            "kind": "constant",
+            "start_line": 62,
+            "end_line": 67,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "TY_COUNT_MISMATCH",
+            "kind": "constant",
+            "start_line": 57,
+            "end_line": 60,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "TY_TWO_ERRORS",
+            "kind": "constant",
+            "start_line": 46,
+            "end_line": 55,
+            "params": [],
+            "returns_hash": "",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "ctx",
+            "kind": "function",
+            "start_line": 70,
+            "end_line": 78,
+            "params": [
+              {
+                "name": "run_dir",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              },
+              {
+                "name": "rc",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='int', ctx=Load())"
+              },
+              {
+                "name": "log",
+                "kind": "pos_or_kw",
+                "has_default": true,
+                "annotation_hash": "Name(id='str', ctx=Load())"
+              },
+              {
+                "name": "options",
+                "kind": "kwarg",
+                "has_default": false,
+                "annotation_hash": "Name(id='Any', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Name(id='ParseContext', ctx=Load())",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_coverage_gate_fails_below_threshold",
+            "kind": "function",
+            "start_line": 104,
+            "end_line": 112,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_coverage_gate_passes_above_threshold",
+            "kind": "function",
+            "start_line": 115,
+            "end_line": 118,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_coverage_merges_junit_findings",
+            "kind": "function",
+            "start_line": 121,
+            "end_line": 126,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_pytest_extracts_failure_from_junit",
+            "kind": "function",
+            "start_line": 81,
+            "end_line": 96,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_pytest_missing_junit_flips_parser_ok",
+            "kind": "function",
+            "start_line": 99,
+            "end_line": 101,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_ruff_missing_report_flips_parser_ok",
+            "kind": "function",
+            "start_line": 160,
+            "end_line": 162,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_ruff_reads_json_report",
+            "kind": "function",
+            "start_line": 151,
+            "end_line": 157,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_ty_declared_count_mismatch_flips_parser_ok",
+            "kind": "function",
+            "start_line": 140,
+            "end_line": 143,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_ty_nonzero_without_diagnostics_flips_parser_ok",
+            "kind": "function",
+            "start_line": 146,
+            "end_line": 148,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_ty_parses_block_format",
+            "kind": "function",
+            "start_line": 129,
+            "end_line": 137,
+            "params": [
+              {
+                "name": "tmp_path",
+                "kind": "pos_or_kw",
+                "has_default": false,
+                "annotation_hash": "Name(id='Path', ctx=Load())"
+              }
+            ],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          }
+        ]
+      },
+      {
+        "module": "tests.test_reconcile",
+        "filepath": "tests/test_reconcile.py",
+        "all_declared": [],
+        "symbols": [
+          {
+            "local_name": "test_gate_failure_overrides_green_rc",
+            "kind": "function",
+            "start_line": 45,
+            "end_line": 52,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_generic_checks_fail_without_evidence",
+            "kind": "function",
+            "start_line": 55,
+            "end_line": 59,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_green_requires_rc_zero_and_clean_parse",
+            "kind": "function",
+            "start_line": 11,
+            "end_line": 14,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_nonzero_with_findings_is_fail",
+            "kind": "function",
+            "start_line": 17,
+            "end_line": 19,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_nonzero_without_findings_is_error_not_fail",
+            "kind": "function",
+            "start_line": 22,
+            "end_line": 26,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_parser_not_ok_never_yields_green_on_rc_zero",
+            "kind": "function",
+            "start_line": 35,
+            "end_line": 37,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_parser_not_ok_on_failure_is_error",
+            "kind": "function",
+            "start_line": 40,
+            "end_line": 42,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          },
+          {
+            "local_name": "test_rc_zero_with_findings_is_mismatch",
+            "kind": "function",
+            "start_line": 29,
+            "end_line": 32,
+            "params": [],
+            "returns_hash": "Constant(value=None)",
+            "exported_via": "name"
+          }
+        ]
+      }
+    ]
+  }
+}
