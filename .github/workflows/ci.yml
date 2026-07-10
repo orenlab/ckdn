@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run CodeClone
-        uses: orenlab/codeclone/.github/actions/codeclone@v2
+        uses: orenlab/codeclone/.github/actions/codeclone@v2.1.0a1
         with:
           fail-on-new: "true"
           sarif: "true"
