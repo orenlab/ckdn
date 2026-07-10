@@ -403,7 +403,6 @@ instead of shelling out, install the FastMCP transport:
 
 ```bash
 uv tool install 'ckdn[mcp]'
-# or in-project: uv add --dev 'ckdn[mcp]'
 ```
 
 `ckdn-mcp` speaks **stdio** only. Config resolution: `--config` →
