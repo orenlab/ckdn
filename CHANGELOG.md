@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional FastMCP stdio server (`ckdn[mcp]` / `ckdn-mcp`) as a thin adapter
+  over a shared stdlib `ckdn.app` layer: `list_checks`, `run_check`,
+  `run_group`, `get_digest`, `list_runs`, `get_evidence`
+- Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
+  semantics stay single-sourced
+
 ## [1.0.0] - 2026-07-10
 
 ### Added

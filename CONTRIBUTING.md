@@ -9,7 +9,7 @@ Thanks for helping with **ckdn** (checkdown).
 ## Development setup
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra mcp
 uv run pre-commit install   # if you use pre-commit
 uv run pytest
 uv run ruff check src tests
@@ -18,6 +18,9 @@ uv run ty check src/ckdn
 # coverage check needs pytest-cov (in the dev extra):
 # uv run ckdn run coverage
 ```
+
+Core package stays **stdlib only** (`dependencies = []`). The MCP server is the optional
+`mcp` extra (`fastmcp`); sync it for MCP tests and local `ckdn-mcp`.
 
 ## Pull requests
 
