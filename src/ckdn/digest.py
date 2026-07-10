@@ -24,7 +24,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ckdn import DIGEST_SCHEMA, META_SCHEMA, __version__
+from ckdn import AGGREGATE_SCHEMA, DIGEST_SCHEMA, META_SCHEMA, __version__
 from ckdn.parsers.base import ParseResult
 from ckdn.runner import RunOutcome
 
@@ -131,19 +131,30 @@ def build_alias_aggregate(
     alias: str,
     results: list[tuple[str, str, int, Path]],
     status: str,
+    rc: int,
 ) -> dict[str, Any]:
-    """Sparse aggregate for alias stdout (members already have digests on disk)."""
+    """Sparse aggregate for alias stdout (members already have digests on disk).
+
+    ``rc`` mirrors the process exit code (the pass-through of the first
+    non-green member), so the stdout document is self-contained.
+    """
     members: list[dict[str, Any]] = []
-    for check, member_status, rc, run_dir in results:
+    for check, member_status, member_rc, run_dir in results:
         row: dict[str, Any] = {
             "check": check,
             "status": member_status,
-            "rc": rc,
+            "rc": member_rc,
         }
         if member_status != "pass":
             row["run_dir"] = str(run_dir)
         members.append(row)
-    return {"alias": alias, "members": members, "status": status}
+    return {
+        "schema": AGGREGATE_SCHEMA,
+        "alias": alias,
+        "status": status,
+        "rc": rc,
+        "members": members,
+    }
 
 
 def build_meta(*, check: str, parser: str, outcome: RunOutcome) -> dict[str, Any]:

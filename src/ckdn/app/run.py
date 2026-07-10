@@ -142,6 +142,7 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
         alias=alias.name,
         results=[(r.check, r.status, r.rc, r.run_dir) for r in results],
         status=status,
+        rc=exit_code,
     )
     return AliasRunResult(
         alias=alias.name,

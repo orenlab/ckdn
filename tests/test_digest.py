@@ -187,10 +187,13 @@ def test_alias_aggregate_sparse() -> None:
             ("pylint", "fail", 1, Path("runs/pylint")),
         ],
         status="fail",
+        rc=1,
     )
     assert agg == {
+        "schema": "ckdn.aggregate/1",
         "alias": "lint",
         "status": "fail",
+        "rc": 1,
         "members": [
             {"check": "ruff", "status": "pass", "rc": 0},
             {

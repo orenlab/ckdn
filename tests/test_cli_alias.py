@@ -120,7 +120,9 @@ def test_alias_runs_members_in_order(
     docs = _load_json_stream(capsys.readouterr().out)
     assert len(docs) == 1
     aggregate = docs[0]
+    assert aggregate["schema"] == "ckdn.aggregate/1"
     assert aggregate["alias"] == "group" and aggregate["status"] == "pass"
+    assert aggregate["rc"] == 0
     assert [m["check"] for m in aggregate["members"]] == ["pass_a", "pass_b"]
     assert all("run_dir" not in m for m in aggregate["members"])
 
@@ -141,6 +143,7 @@ def test_fail_fast_stops_after_first_failure(
     assert len(docs) == 1
     aggregate = docs[0]
     assert aggregate["alias"] == "group"
+    assert aggregate["rc"] == 1
     assert [m["check"] for m in aggregate["members"]] == ["fail_a"]
     assert "run_dir" in aggregate["members"][0]
 

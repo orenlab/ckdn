@@ -95,8 +95,10 @@ def test_run_alias_aggregate(tmp_path: Path) -> None:
     )
     result = run_alias(cfg, cfg.checks["g"])
     assert result.exit_code == 0
+    assert result.aggregate["schema"] == "ckdn.aggregate/1"
     assert result.aggregate["alias"] == "g"
     assert result.aggregate["status"] == "pass"
+    assert result.aggregate["rc"] == 0
     assert len(result.members) == 1
 
 
