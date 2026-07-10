@@ -7,16 +7,16 @@ SPDX-License-Identifier: MIT
   <picture>
     <source
       media="(prefers-color-scheme: dark)"
-      srcset="https://raw.githubusercontent.com/orenlab/ckdn/main/assets/ckdn-wordmark-dark.svg"
+      srcset="https://raw.githubusercontent.com/orenlab/ckdn/refs/heads/main/assets/ckdn-wordmark-dark.svg"
     >
     <source
       media="(prefers-color-scheme: light)"
-      srcset="https://raw.githubusercontent.com/orenlab/ckdn/main/assets/ckdn-wordmark.svg"
+      srcset="https://raw.githubusercontent.com/orenlab/ckdn/refs/heads/main/assets/ckdn-wordmark.svg"
     >
     <img
       alt="ckdn — deterministic check runner and log digester for AI-assisted development loops"
-      src="https://raw.githubusercontent.com/orenlab/ckdn/main/assets/ckdn-wordmark.svg"
-      width="280"
+      src="https://raw.githubusercontent.com/orenlab/ckdn/refs/heads/main/assets/ckdn-wordmark.svg"
+      width="220"
     >
   </picture>
 

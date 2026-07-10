@@ -2,12 +2,12 @@
 SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
 SPDX-License-Identifier: MIT
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 60" fill="none" role="img" aria-label="ckdn">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 52" fill="none" role="img" aria-label="ckdn">
   <title>ckdn</title>
-  <rect x="14" y="6" width="36" height="36" rx="10" fill="#3dd68c" opacity="0.18"/>
-  <rect x="8" y="12" width="36" height="36" rx="10" fill="#1a2e28"/>
+  <rect x="10" y="4" width="36" height="36" rx="10" fill="#3dd68c" opacity="0.18"/>
+  <rect x="4" y="10" width="36" height="36" rx="10" fill="#1a2e28"/>
   <path
-    d="M18 30 L25 37 L38 22"
+    d="M14 28 L21 35 L34 20"
     fill="none"
     stroke="#3dd68c"
     stroke-width="3.2"
@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
     stroke-linejoin="round"
   />
   <path
-    d="M19 40 L26 45 L33 40"
+    d="M15 38 L22 43 L29 38"
     fill="none"
     stroke="#7ee0b0"
     stroke-width="2.2"
@@ -24,8 +24,8 @@ SPDX-License-Identifier: MIT
     opacity="0.9"
   />
   <text
-    x="56"
-    y="32"
+    x="50"
+    y="30"
     font-family="'JetBrains Mono', ui-monospace, monospace"
     font-size="28"
     font-weight="700"
