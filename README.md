@@ -30,13 +30,13 @@ SPDX-License-Identifier: MIT
   </p>
 
   <p>
-    <a href="https://pypi.org/project/ckdn/"><img src="https://img.shields.io/pypi/v/ckdn.svg?color=3dd68c" alt="PyPI"/></a>
+    <a href="https://pypi.org/project/ckdn/"><img src="https://img.shields.io/pypi/v/ckdn.svg?color=3dd68c&logo=pypi&logoColor=white" alt="PyPI"/></a>
     <a href="https://github.com/orenlab/ckdn/actions/workflows/ci.yml"><img src="https://github.com/orenlab/ckdn/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-    <a href="https://github.com/orenlab/ckdn/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3dd68c" alt="MIT license"/></a>
+    <a href="https://github.com/orenlab/ckdn/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3dd68c?logo=opensourceinitiative&logoColor=white" alt="MIT license"/></a>
     <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-%3E%3D3.11-3dd68c?logo=python&logoColor=white" alt="Python ≥ 3.11"/></a>
-    <a href="https://github.com/orenlab/ckdn"><img src="https://img.shields.io/badge/core-stdlib%20only-3dd68c" alt="core: stdlib only"/></a>
-    <a href="https://github.com/orenlab/ckdn/security/advisories"><img src="https://img.shields.io/badge/security-policy-3dd68c" alt="Security policy"/></a>
-    <a href="#digests-ckdndigest2"><img src="https://img.shields.io/badge/digest-ckdn.digest%2F2-3dd68c" alt="digest schema v2"/></a>
+    <a href="https://github.com/orenlab/ckdn"><img src="https://img.shields.io/badge/core-stdlib%20only-3dd68c?logo=python&logoColor=white" alt="core: stdlib only"/></a>
+    <a href="https://github.com/orenlab/ckdn/security/advisories"><img src="https://img.shields.io/badge/security-policy-3dd68c?logo=github&logoColor=white" alt="Security policy"/></a>
+    <a href="#digests-ckdndigest2"><img src="https://img.shields.io/badge/digest-ckdn.digest%2F2-3dd68c?logo=json&logoColor=white" alt="digest schema v2"/></a>
   </p>
 
 </div>
