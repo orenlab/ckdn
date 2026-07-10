@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from ckdn import cli
+from ckdn.app import run as app_run
 from ckdn.config import CONFIG_NAME, STARTER_CONFIG, load_config
 from ckdn.digest import DIGEST_NAME
 from ckdn.parsers.base import ParseResult
@@ -51,7 +52,7 @@ def stub_execute(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> RunOutcome:
         return _outcome(run_dir, 0)
 
-    monkeypatch.setattr(cli, "execute", _execute)
+    monkeypatch.setattr(app_run, "execute", _execute)
 
 
 def test_main_run_generic(tmp_path: Path, stub_execute: None, capsys: Any) -> None:
@@ -104,8 +105,8 @@ def test_parser_crash_becomes_parse_mismatch(
     ) -> RunOutcome:
         return _outcome(run_dir, 0)
 
-    monkeypatch.setattr(cli, "get_parser", lambda _n: Boom())
-    monkeypatch.setattr(cli, "execute", _execute)
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: Boom())
+    monkeypatch.setattr(app_run, "execute", _execute)
     rc = cli.main(["run", "--config", str(cfg), "ok"])
     assert rc == 1
     doc = json.loads(capsys.readouterr().out)
@@ -127,7 +128,7 @@ def test_exec_note_prepended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     ) -> RunOutcome:
         return _outcome(run_dir, 127, note="command not found: x")
 
-    monkeypatch.setattr(cli, "execute", _execute)
+    monkeypatch.setattr(app_run, "execute", _execute)
     rc = cli.main(["run", "--config", str(cfg), "ok", "--quiet"])
     assert rc == 127
     runs = tmp_path / "runs"
@@ -210,7 +211,7 @@ def test_main_extra_after_dashdash(
         seen["tokens"] = tokens
         return _outcome(run_dir, 0)
 
-    monkeypatch.setattr(cli, "execute", _execute)
+    monkeypatch.setattr(app_run, "execute", _execute)
     rc = cli.main(["run", "--config", str(cfg), "ok", "--", "--flag", "1"])
     assert rc == 0
     assert seen["tokens"][-2:] == ["--flag", "1"]

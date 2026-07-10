@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from ckdn import cli
+from ckdn.app import run as app_run
 from ckdn.config import load_config
 from ckdn.runner import RunOutcome
 
@@ -99,7 +100,7 @@ def fake_execute(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[int]]:
         rc = queue.pop(0) if queue else 0
         return _outcome(run_dir, rc)
 
-    monkeypatch.setattr(cli, "execute", _execute)
+    monkeypatch.setattr(app_run, "execute", _execute)
     return state
 
 

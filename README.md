@@ -68,7 +68,8 @@ Every check goes through one orchestrator that:
   </picture>
 </div>
 
-Runtime: Python ≥ 3.11, **stdlib only** (zero third-party dependencies).
+Runtime: Python ≥ 3.11, **stdlib only** for the core CLI (zero third-party
+dependencies). The optional MCP server is an extra (`ckdn[mcp]`).
 
 ## Why
 
@@ -90,6 +91,9 @@ ckdn may **downgrade** green; it never **upgrades** red.
 uv tool install ckdn          # global CLI
 # or as a project dev dependency:
 uv add --dev ckdn
+# optional MCP server (FastMCP):
+uv tool install 'ckdn[mcp]'
+# or: uv add --dev 'ckdn[mcp]'
 ```
 
 ## Quick start
@@ -106,6 +110,49 @@ ckdn run ruff                  # one atomic check
 ckdn show                      # pretty-print latest digest
 ckdn list                      # recent runs
 ```
+
+## MCP (optional)
+
+Install the FastMCP transport when an agent should call ckdn over MCP instead of shelling out:
+
+```bash
+uv tool install 'ckdn[mcp]'
+# or in-project: uv add --dev 'ckdn[mcp]'
+```
+
+Cursor / Claude Desktop (stdio):
+
+```json
+{
+  "mcpServers": {
+    "ckdn": {
+      "command": "ckdn-mcp",
+      "args": [],
+      "env": {
+        "CKDN_CONFIG": "/absolute/path/to/your/ckdn.toml"
+      }
+    }
+  }
+}
+```
+
+Tools (thin adapter over the same application layer as the CLI):
+
+| Tool | Purpose |
+|------|---------|
+| `list_checks` | Configured atomic checks + aliases |
+| `run_check` | Run one **atomic** check → `{digest, exit_code}` |
+| `run_group` | Run one **alias** → `{aggregate, exit_code}` |
+| `get_digest` | Load stored `ckdn.digest/2` (latest or by run id) |
+| `list_runs` | Recent run summaries |
+| `get_evidence` | Bounded findings / artifact line slices (never auto-dumps `full.log`) |
+
+Trust rules:
+
+- Only checks from `ckdn.toml` — no arbitrary shell.
+- `fail` / `error` / `parse_mismatch` are **normal structured results**, not MCP tool failures.
+- MCP `isError` is reserved for impossible tool calls (missing config, unknown check, path escape).
+- Core CLI remains stdlib-only; FastMCP is the optional extra.
 
 ## Status model
 
