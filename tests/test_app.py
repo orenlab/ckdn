@@ -148,11 +148,12 @@ def test_read_path_rejects_escaping_run(tmp_path: Path) -> None:
     (outside / LOG_NAME).write_text("TOP_SECRET\n", encoding="utf-8")
 
     for bad in (str(outside), "..", ".", "../victim/run", "sub/run"):
-        with pytest.raises(RunNotFoundError):
+        # Escaped/invalid refs read as "no such run", not "nothing has run".
+        with pytest.raises(RunNotFoundError, match="not a valid run id"):
             get_digest(cfg, bad)
-        with pytest.raises(RunNotFoundError):
+        with pytest.raises(RunNotFoundError, match="not a valid run id"):
             get_evidence(cfg, ref=bad)
-        with pytest.raises(RunNotFoundError):
+        with pytest.raises(RunNotFoundError, match="not a valid run id"):
             get_evidence(cfg, ref=bad, artifact=LOG_NAME)
 
 

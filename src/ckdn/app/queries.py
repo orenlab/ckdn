@@ -23,6 +23,22 @@ MAX_LIST_RUNS_LIMIT = 500
 _EVIDENCE_READ_CHUNK = 1 << 16  # 64 KiB
 _MAX_EVIDENCE_LINE_BYTES = 64 << 10  # 64 KiB per returned line
 
+
+def _no_run_error(ref: str | None) -> RunNotFoundError:
+    """Distinguish an unresolved/invalid ref from an empty runs directory.
+
+    A truthy ``ref`` that resolves to nothing is either unknown or not a valid
+    run id inside the runs dir (absolute/``..``/multi-segment/symlink refs are
+    refused by ``resolve_run_dir``); say so rather than implying nothing has run.
+    """
+    if ref:
+        return RunNotFoundError(
+            f"no run matching {ref!r} (unknown, or not a valid run id "
+            "inside the runs directory)"
+        )
+    return RunNotFoundError("no matching run found (nothing has been run yet?)")
+
+
 _DIGEST_EVIDENCE_KEYS = (
     "findings",
     "findings_total",
@@ -87,7 +103,7 @@ def get_digest(cfg: Config, ref: str | None = None) -> dict[str, Any]:
     """Load ``digest.json`` for ``ref`` or the latest run."""
     run_dir = resolve_run_dir(cfg.runs_dir, ref)
     if run_dir is None:
-        raise RunNotFoundError("no matching run found (nothing has been run yet?)")
+        raise _no_run_error(ref)
     return _load_digest(run_dir)
 
 
@@ -161,7 +177,7 @@ def get_evidence(
     """
     run_dir = resolve_run_dir(cfg.runs_dir, ref)
     if run_dir is None:
-        raise RunNotFoundError("no matching run found (nothing has been run yet?)")
+        raise _no_run_error(ref)
 
     digest = _load_digest(run_dir)
     payload: dict[str, Any] = {
