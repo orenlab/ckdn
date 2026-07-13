@@ -24,6 +24,7 @@ LATEST_FILE = "LATEST"  # fallback pointer where symlinks are unavailable
 
 RC_TIMEOUT = 124
 RC_NOT_FOUND = 127
+RC_POLICY = 126
 
 
 @dataclass(frozen=True)

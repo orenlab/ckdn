@@ -33,6 +33,8 @@ jobs:
         run: uv run mypy src/ckdn
       - name: Ty
         run: uv run ty check src/ckdn
+      - name: Verify config lock
+        run: uv run ckdn verify-config --locked
       - name: Pytest
         run: uv run pytest -q
 

@@ -8,10 +8,11 @@ from typing import Any
 import pytest
 
 from ckdn.parsers.bandit_json import BanditJsonParser
-from ckdn.parsers.base import ParseContext
+from ckdn.parsers.base import ArtifactPathError, ParseContext, artifact_path
 from ckdn.parsers.coverage_xml import CoverageXmlParser
 from ckdn.parsers.mypy import MypyParser
 from ckdn.parsers.pip_audit_json import PipAuditJsonParser
+from ckdn.parsers.pre_commit_text import PreCommitTextParser
 from ckdn.parsers.pylint_json import PylintJsonParser
 from ckdn.parsers.pyright_json import PyrightJsonParser
 from ckdn.parsers.pytest_junit import PytestJUnitParser
@@ -87,6 +88,51 @@ def ctx(run_dir: Path, rc: int, log: str = "", **options: Any) -> ParseContext:
         top=20,
         max_snippet_lines=12,
     )
+
+
+def test_artifact_path_absolute_not_redoubled(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-abc"
+    run_dir.mkdir()
+    abs_junit = (run_dir / "junit.xml").resolve()
+    abs_junit.write_text(JUNIT_ONE_FAILURE, encoding="utf-8")
+    assert artifact_path(run_dir, str(abs_junit)) == abs_junit
+    assert artifact_path(run_dir, "{run_dir}/junit.xml") == abs_junit
+    substituted = f"{run_dir}/junit.xml"
+    assert artifact_path(run_dir, substituted) == abs_junit
+
+
+def test_artifact_path_rejects_escape(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    with pytest.raises(ArtifactPathError, match="escapes run directory"):
+        artifact_path(run_dir, "/etc/passwd")
+    with pytest.raises(ArtifactPathError, match="escapes run directory"):
+        artifact_path(run_dir, "../../../etc/passwd")
+    with pytest.raises(ArtifactPathError, match="escapes run directory"):
+        artifact_path(run_dir, "{run_dir}/../../../etc/passwd")
+
+
+def test_artifact_path_rejects_symlink_escape(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outside = tmp_path / "outside.xml"
+    outside.write_text("<testsuites/>", encoding="utf-8")
+    link = run_dir / "junit.xml"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+    with pytest.raises(ArtifactPathError, match="escapes run directory"):
+        artifact_path(run_dir, "junit.xml")
+
+
+def test_pytest_rejects_artifact_escape_via_options(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    with pytest.raises(ArtifactPathError):
+        PytestJUnitParser().parse(
+            ctx(run_dir, rc=0, junit="/etc/passwd"),
+        )
 
 
 def test_pytest_extracts_failure_from_junit(tmp_path: Path) -> None:
@@ -419,6 +465,97 @@ def test_reformat_nonzero_empty_flips_parser_ok(tmp_path: Path) -> None:
     assert result.parser_ok is False
 
 
+# --- pre_commit -------------------------------------------------------------
+
+PRE_COMMIT_FAIL = """\
+Fail Hook................................................................Failed
+- hook id: fail-hook
+- exit code: 1
+
+line1
+line2
+
+Pass Hook................................................................Passed
+"""
+
+PRE_COMMIT_MODIFIED = """\
+fix eof..................................................................Failed
+- hook id: fix-eof
+- files were modified by this hook
+"""
+
+PRE_COMMIT_SKIPPED = """\
+check for broken symlinks............................(no files to check)Skipped
+Ruff (lint)..............................................................Passed
+"""
+
+PRE_COMMIT_VERBOSE_PASS = """\
+Ruff (lint)..............................................................Passed
+- hook id: ruff-check
+- duration: 0.03s
+
+All checks passed!
+"""
+
+
+def test_pre_commit_parses_failed_hook_output(tmp_path: Path) -> None:
+    result = PreCommitTextParser().parse(ctx(tmp_path, rc=1, log=PRE_COMMIT_FAIL))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+    finding = result.findings[0]
+    assert finding.id == "fail-hook"
+    assert finding.kind == "hook_failure"
+    assert finding.message == "Fail Hook failed (exit code 1)"
+    assert "line1" in finding.detail
+    assert result.summary == {
+        "hooks_total": 2,
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "failed_hooks": ["fail-hook"],
+    }
+
+
+def test_pre_commit_parses_modified_files_failure(tmp_path: Path) -> None:
+    result = PreCommitTextParser().parse(ctx(tmp_path, rc=1, log=PRE_COMMIT_MODIFIED))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+    assert result.findings[0].id == "fix-eof"
+    assert result.findings[0].message == "fix eof modified files"
+
+
+def test_pre_commit_counts_skipped_hooks(tmp_path: Path) -> None:
+    result = PreCommitTextParser().parse(ctx(tmp_path, rc=0, log=PRE_COMMIT_SKIPPED))
+    assert result.parser_ok
+    assert result.findings == []
+    assert result.summary["hooks_total"] == 2
+    assert result.summary["skipped"] == 1
+    assert result.summary["passed"] == 1
+
+
+def test_pre_commit_verbose_pass_has_no_findings(tmp_path: Path) -> None:
+    result = PreCommitTextParser().parse(
+        ctx(tmp_path, rc=0, log=PRE_COMMIT_VERBOSE_PASS)
+    )
+    assert result.parser_ok
+    assert result.findings == []
+    assert result.summary["passed"] == 1
+
+
+def test_pre_commit_nonzero_without_failures_flips_parser_ok(tmp_path: Path) -> None:
+    result = PreCommitTextParser().parse(
+        ctx(tmp_path, rc=1, log=PRE_COMMIT_VERBOSE_PASS)
+    )
+    assert result.parser_ok is False
+
+
+def test_pre_commit_unparsed_output_flips_parser_ok(tmp_path: Path) -> None:
+    result = PreCommitTextParser().parse(
+        ctx(tmp_path, rc=1, log="pre-commit internal error\n")
+    )
+    assert result.parser_ok is False
+
+
 # --- pip_audit --------------------------------------------------------------
 
 PIP_AUDIT_JSON = """\
@@ -742,7 +879,7 @@ def test_available_parsers_lists_builtins() -> None:
     from ckdn.parsers import available_parsers
 
     names = available_parsers()
-    assert "generic" in names and "ruff" in names
+    assert "generic" in names and "pre_commit" in names and "ruff" in names
 
 
 def test_module_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:

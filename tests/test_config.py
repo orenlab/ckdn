@@ -158,6 +158,11 @@ def test_starter_config_loads(tmp_path: Path) -> None:
     assert cfg.checks["lint"].is_alias
     assert cfg.checks["lint"].members == ("ruff",)
     assert cfg.checks["ruff"].parser == "ruff"
+    assert cfg.checks["format"].parser == "reformat"
+    assert cfg.checks["pre_commit"].parser == "pre_commit"
+    assert cfg.checks["lock"].parser == "generic"
+    assert cfg.checks["style"].members == ("format", "ruff")
+    assert cfg.checks["hooks"].members == ("pre_commit",)
     assert cfg.checks["types"].is_alias
     assert cfg.checks["types"].members == ("ty", "mypy")
     assert cfg.checks["mypy"].parser == "mypy"
@@ -233,3 +238,16 @@ def test_timeout_parsed(tmp_path: Path) -> None:
         )
     )
     assert cfg.checks["a"].timeout == 12.5
+
+
+def test_cwd_separate_from_config_path(tmp_path: Path) -> None:
+    config_dir = tmp_path / "cfg"
+    worktree = tmp_path / "wt"
+    config_dir.mkdir()
+    worktree.mkdir()
+    path = config_dir / "ckdn.toml"
+    path.write_text('[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    cfg = load_config(path, cwd=worktree)
+    assert cfg.config_path == path.resolve()
+    assert cfg.cwd == worktree.resolve()
+    assert cfg.runs_dir == worktree / ".agent-runs"

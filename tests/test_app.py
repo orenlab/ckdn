@@ -25,7 +25,7 @@ from ckdn.app import (
     run_check,
     run_one,
 )
-from ckdn.config import load_config
+from ckdn.config import Config, load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
 from ckdn.runner import LOG_NAME, create_run_dir, resolve_run_dir, update_latest
 
@@ -39,13 +39,15 @@ def _write_cfg(tmp_path: Path, body: str) -> Path:
     return path
 
 
+def _load_cfg(tmp_path: Path, body: str) -> Config:
+    return load_config(_write_cfg(tmp_path, body), cwd=tmp_path)
+
+
 def test_list_checks_shapes(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(
-            tmp_path,
-            '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-            '[check.g]\nmembers = ["ok"]\nfail_fast = false\n',
-        )
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["ok"]\nfail_fast = false\n',
     )
     items = {c["name"]: c for c in list_checks(cfg)}
     assert items["ok"]["kind"] == "atomic"
@@ -56,9 +58,7 @@ def test_list_checks_shapes(tmp_path: Path) -> None:
 
 
 def test_run_one_and_digest_roundtrip(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     result = run_one(cfg, cfg.checks["ok"], extra=[])
     assert result.status == "pass"
     assert result.exit_code == 0
@@ -70,12 +70,10 @@ def test_run_one_and_digest_roundtrip(tmp_path: Path) -> None:
 
 
 def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(
-            tmp_path,
-            '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-            '[check.g]\nmembers = ["ok"]\n',
-        )
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["ok"]\n',
     )
     with pytest.raises(UnknownCheckError):
         run_check(cfg, "nope")
@@ -86,12 +84,10 @@ def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
 
 
 def test_run_alias_aggregate(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(
-            tmp_path,
-            '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-            '[check.g]\nmembers = ["ok"]\n',
-        )
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["ok"]\n',
     )
     result = run_alias(cfg, cfg.checks["g"])
     assert result.exit_code == 0
@@ -103,9 +99,7 @@ def test_run_alias_aggregate(tmp_path: Path) -> None:
 
 
 def test_list_runs_and_evidence_bounds(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_one(cfg, cfg.checks["ok"], extra=[])
     rows = list_runs(cfg, limit=5)
     assert rows
@@ -126,9 +120,7 @@ def test_list_runs_and_evidence_bounds(tmp_path: Path) -> None:
 
 
 def test_evidence_rejects_path_escape(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_one(cfg, cfg.checks["ok"], extra=[])
     with pytest.raises(ArtifactError):
         get_evidence(cfg, artifact="../secrets.txt")
@@ -139,9 +131,7 @@ def test_evidence_rejects_path_escape(tmp_path: Path) -> None:
 
 
 def test_read_path_rejects_escaping_run(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_one(cfg, cfg.checks["ok"], extra=[])
     # A sibling run dir outside runs_dir that must stay unreachable via MCP.
     outside = tmp_path / "victim" / "run"
@@ -160,9 +150,7 @@ def test_read_path_rejects_escaping_run(tmp_path: Path) -> None:
 
 
 def test_read_path_rejects_symlinked_run(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_one(cfg, cfg.checks["ok"], extra=[])
     outside = tmp_path / "victim"
     outside.mkdir()
@@ -181,9 +169,7 @@ def test_read_path_rejects_symlinked_run(tmp_path: Path) -> None:
 
 def test_evidence_digest_bound_to_run_dir(tmp_path: Path) -> None:
     """The digest is read from the resolved run dir, never a same-named decoy."""
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_one(cfg, cfg.checks["ok"], extra=[])  # latest → check "ok"
     decoy = create_run_dir(cfg.runs_dir, "decoy")
     (decoy / DIGEST_NAME).write_text(
@@ -199,9 +185,7 @@ def test_evidence_digest_bound_to_run_dir(tmp_path: Path) -> None:
 
 
 def test_evidence_streaming_slice_bounds(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_one(cfg, cfg.checks["ok"], extra=[])
     run_dir = resolve_run_dir(cfg.runs_dir, None)
     assert run_dir is not None
@@ -246,9 +230,7 @@ def test_list_runs_limit_capped(
 ) -> None:
     from ckdn.app import queries as q
 
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     for _ in range(4):
         run_one(cfg, cfg.checks["ok"], extra=[])
     monkeypatch.setattr(q, "MAX_LIST_RUNS_LIMIT", 2)
@@ -257,17 +239,13 @@ def test_list_runs_limit_capped(
 
 
 def test_get_digest_missing_run(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     with pytest.raises(RunNotFoundError):
         get_digest(cfg)
 
 
 def test_corrupt_digest(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_dir = create_run_dir(cfg.runs_dir, "ok")
     (run_dir / DIGEST_NAME).write_text("{not-json", encoding="utf-8")
     update_latest(cfg.runs_dir, run_dir)
@@ -276,12 +254,9 @@ def test_corrupt_digest(tmp_path: Path) -> None:
 
 
 def test_list_checks_timeout_and_options(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(
-            tmp_path,
-            '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-            "timeout = 1.5\ntop = 3\n",
-        )
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\ntimeout = 1.5\ntop = 3\n',
     )
     item = {c["name"]: c for c in list_checks(cfg)}["ok"]
     assert item["timeout"] == 1.5
@@ -289,9 +264,7 @@ def test_list_checks_timeout_and_options(tmp_path: Path) -> None:
 
 
 def test_get_digest_non_object(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     run_dir = create_run_dir(cfg.runs_dir, "ok")
     (run_dir / DIGEST_NAME).write_text("[1, 2]", encoding="utf-8")
     update_latest(cfg.runs_dir, run_dir)
@@ -300,9 +273,7 @@ def test_get_digest_non_object(tmp_path: Path) -> None:
 
 
 def test_list_runs_corrupt_and_fields(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     good = run_one(cfg, cfg.checks["ok"], extra=[])
     assert "rc" in list_runs(cfg, limit=5)[-1]
     assert "run_dir" in list_runs(cfg, limit=5)[-1]
@@ -316,9 +287,7 @@ def test_list_runs_corrupt_and_fields(tmp_path: Path) -> None:
 
 
 def test_evidence_invalid_name_meta_and_missing_run(tmp_path: Path) -> None:
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     with pytest.raises(RunNotFoundError):
         get_evidence(cfg)
     run_one(cfg, cfg.checks["ok"], extra=[])
@@ -365,12 +334,10 @@ def test_run_alias_not_alias_and_status_fail(
     from ckdn.app import run as app_run
     from ckdn.app.types import AtomicRunResult
 
-    cfg = load_config(
-        _write_cfg(
-            tmp_path,
-            '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-            '[check.g]\nmembers = ["ok"]\n',
-        )
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["ok"]\n',
     )
     with pytest.raises(NotAliasError):
         run_alias(cfg, cfg.checks["ok"])
@@ -392,15 +359,23 @@ def test_run_alias_not_alias_and_status_fail(
     assert result.status == "fail"
 
 
+def test_run_one_rejects_parser_artifact_escape(tmp_path: Path) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.bad]\ncommand = "true"\nparser = "pytest"\njunit = "/etc/passwd"\n',
+    )
+    result = run_one(cfg, cfg.checks["bad"], extra=[])
+    assert result.status == "parse_mismatch"
+    assert any("ArtifactPathError" in note for note in result.digest.get("notes", []))
+
+
 def test_run_one_run_dir_outside_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ckdn.app import run as app_run
     from ckdn.runner import RunOutcome
 
-    cfg = load_config(
-        _write_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    )
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     outside = tmp_path.parent / f"{tmp_path.name}-outside-run"
     outside.mkdir()
 

@@ -40,7 +40,7 @@ async def test_mcp_list_and_run_check_pass(tmp_path: Path) -> None:
         '[check.bad]\ncommand = "false"\nparser = "generic"\n'
         '[check.g]\nmembers = ["ok", "bad"]\n',
     )
-    mcp = create_server(config=cfg_path)
+    mcp = create_server(config=cfg_path, cwd=tmp_path)
     async with Client(mcp) as client:
         listed = await client.call_tool("list_checks", {"config": str(cfg_path)})
         payload = _data(listed)
@@ -67,7 +67,7 @@ async def test_mcp_run_check_fail_is_not_tool_error(tmp_path: Path) -> None:
         tmp_path,
         '[check.bad]\ncommand = "false"\nparser = "generic"\n',
     )
-    mcp = create_server(config=cfg_path)
+    mcp = create_server(config=cfg_path, cwd=tmp_path)
     async with Client(mcp) as client:
         failed = await client.call_tool(
             "run_check",
@@ -86,7 +86,7 @@ async def test_mcp_unknown_check_is_error(tmp_path: Path) -> None:
         tmp_path,
         '[check.ok]\ncommand = "true"\nparser = "generic"\n',
     )
-    mcp = create_server(config=cfg_path)
+    mcp = create_server(config=cfg_path, cwd=tmp_path)
     async with Client(mcp) as client:
         with pytest.raises(Exception):  # noqa: B017 — tool error surface varies
             await client.call_tool(
@@ -102,7 +102,7 @@ async def test_mcp_run_group_and_evidence(tmp_path: Path) -> None:
         '[check.ok]\ncommand = "true"\nparser = "generic"\n'
         '[check.g]\nmembers = ["ok"]\n',
     )
-    mcp = create_server(config=cfg_path)
+    mcp = create_server(config=cfg_path, cwd=tmp_path)
     async with Client(mcp) as client:
         group = await client.call_tool(
             "run_group",
@@ -182,7 +182,9 @@ def test_mcp_main_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         def run(self, **kwargs: object) -> None:
             calls.append(kwargs)
 
-    monkeypatch.setattr(server_mod, "create_server", lambda config=None: _Fake())
+    monkeypatch.setattr(
+        server_mod, "create_server", lambda config=None, cwd=None: _Fake()
+    )
     server_mod.main(["--config", str(tmp_path / "ckdn.toml")])
     assert len(calls) == 1
 
@@ -200,7 +202,9 @@ def test_mcp_main_pins_stdio_transport(
             seen.append(transport)
 
     monkeypatch.setenv("FASTMCP_TRANSPORT", "http")
-    monkeypatch.setattr(server_mod, "create_server", lambda config=None: _Fake())
+    monkeypatch.setattr(
+        server_mod, "create_server", lambda config=None, cwd=None: _Fake()
+    )
     server_mod.main([])
     assert seen == ["stdio"]
 
@@ -212,7 +216,7 @@ async def test_mcp_run_check_rejects_alias(tmp_path: Path) -> None:
         '[check.ok]\ncommand = "true"\nparser = "generic"\n'
         '[check.g]\nmembers = ["ok"]\n',
     )
-    mcp = create_server(config=cfg_path)
+    mcp = create_server(config=cfg_path, cwd=tmp_path)
     async with Client(mcp) as client:
         with pytest.raises(Exception):  # noqa: B017
             await client.call_tool(

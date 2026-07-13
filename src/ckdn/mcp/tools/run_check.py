@@ -25,6 +25,7 @@ def register(mcp: Any, ctx: ServerContext) -> None:
         check: str,
         extra_args: list[str] | None = None,
         config: str | None = None,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
         """Run an atomic check.
 
@@ -32,8 +33,9 @@ def register(mcp: Any, ctx: ServerContext) -> None:
             check: Atomic check name from ckdn.toml.
             extra_args: Extra argv appended to the configured command.
             config: Optional path to ckdn.toml.
+            cwd: Optional working directory for subprocesses and relative runs_dir.
         """
-        cfg = ctx.load(config)
+        cfg = ctx.load(config, cwd)
         item = cfg.checks.get(check)
         if item is None:
             raise UnknownCheckError(

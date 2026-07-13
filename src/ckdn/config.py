@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from ckdn.command_policy import COMMAND_POLICIES, CommandPolicy
 
 CONFIG_NAME = "ckdn.toml"
 
@@ -29,6 +32,9 @@ STARTER_CONFIG = (
     "top = 20                   # max findings / top entries in a digest\n"
     "max_snippet_lines = 12     # max detail lines per finding\n"
     "log_tail_lines = 40        # log tail size on error / parse_mismatch\n"
+    '# command_policy = "workspace"  # workspace | allowlist | off\n'
+    "# [run.command_allowlist]\n"
+    '# prefixes = ["make ", "./scripts/"]  # only when command_policy = allowlist\n'
     "\n"
     "# --- enabled -------------------------------------------------------\n"
     "\n"
@@ -84,19 +90,39 @@ STARTER_CONFIG = (
     "# fail_fast = false\n"
     '# # members = ["ruff", "pylint", "bandit"]\n'
     "\n"
+    "[check.format]\n"
+    'command = "uv run ruff format --check ."\n'
+    '# # command = "uv run black --check src tests"\n'
+    'parser = "reformat"\n'
+    "# timeout = 60\n"
+    "# top = 20\n"
+    "\n"
+    "[check.pre_commit]\n"
+    'command = "uv run pre-commit run --all-files"\n'
+    'parser = "pre_commit"\n'
+    "timeout = 600\n"
+    "# # pre-push stage: add --hook-stage pre-push\n"
+    "# # single hook: uv run pre-commit run <hook-id> --all-files\n"
+    "\n"
+    "[check.lock]\n"
+    'command = "uv lock --check"\n'
+    'parser = "generic"\n'
+    "timeout = 60\n"
+    "\n"
+    "[check.style]\n"
+    'members = ["format", "ruff"]\n'
+    "# fail_fast = false\n"
+    "\n"
+    "[check.hooks]\n"
+    'members = ["pre_commit"]\n'
+    "# fail_fast = false\n"
+    "\n"
     "# --- optional parsers (uncomment to enable) -----------------------\n"
     "\n"
     "# [check.pyright]\n"
     '# command = "uvx pyright --outputjson"\n'
     '# parser = "pyright"\n'
     "# timeout = 120\n"
-    "# top = 20\n"
-    "\n"
-    "# [check.format]\n"
-    '# command = "uv run ruff format --check ."\n'
-    '# # command = "uv run black --check src tests"\n'
-    '# parser = "reformat"\n'
-    "# timeout = 60\n"
     "# top = 20\n"
     "\n"
     "# [check.pip_audit]\n"
@@ -171,6 +197,8 @@ class RunSettings:
     top: int = 20
     max_snippet_lines: int = 12
     log_tail_lines: int = 40
+    command_policy: CommandPolicy = "workspace"
+    command_allowlist: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -192,18 +220,57 @@ class CheckConfig:
 
 @dataclass(frozen=True)
 class Config:
-    root: Path
+    """Loaded ``ckdn.toml`` plus runtime working directory."""
+
+    config_path: Path
+    cwd: Path
     run: RunSettings
     checks: dict[str, CheckConfig]
 
     @property
+    def root(self) -> Path:
+        """Backward-compatible alias for :attr:`cwd`."""
+        return self.cwd
+
+    @property
     def runs_dir(self) -> Path:
         d = self.run.runs_dir
-        return d if d.is_absolute() else self.root / d
+        return d if d.is_absolute() else self.cwd / d
 
 
 _ATOMIC_RESERVED = frozenset({"command", "parser", "timeout"})
 _ALIAS_RESERVED = frozenset({"members", "fail_fast"})
+
+
+def _parse_command_allowlist(run_raw: dict[str, Any]) -> tuple[str, ...] | None:
+    table = run_raw.get("command_allowlist")
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise ConfigError("[run.command_allowlist] must be a table")
+    raw = table.get("prefixes")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(
+            "[run.command_allowlist].prefixes must be a non-empty array of strings"
+        )
+    if not all(isinstance(item, str) and item for item in raw):
+        raise ConfigError(
+            "[run.command_allowlist].prefixes must be a non-empty array of strings"
+        )
+    return tuple(str(item) for item in raw)
+
+
+def _parse_command_policy(run_raw: dict[str, Any]) -> CommandPolicy:
+    raw = run_raw.get("command_policy", "workspace")
+    policy = str(raw)
+    if policy not in COMMAND_POLICIES:
+        raise ConfigError(
+            "[run].command_policy must be one of: "
+            f"{', '.join(sorted(COMMAND_POLICIES))}"
+        )
+    return cast(CommandPolicy, policy)
 
 
 def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
@@ -291,8 +358,20 @@ def _validate_aliases(checks: dict[str, CheckConfig]) -> None:
                 )
 
 
-def load_config(path: Path | None = None) -> Config:
-    cfg_path = (path or Path.cwd() / CONFIG_NAME).resolve()
+def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
+    """Load ``ckdn.toml``.
+
+    ``cwd`` is the working directory for subprocesses and for resolving
+    relative ``runs_dir`` paths. It defaults to the process invocation
+    directory (``Path.cwd()``), not the config file's parent — so a config
+    under ``/tmp`` can drive checks in a worktree via ``--cwd`` / ``CKDN_CWD``.
+    """
+    if cwd is None:
+        env_cwd = os.environ.get("CKDN_CWD")
+        if env_cwd:
+            cwd = Path(env_cwd)
+    working = (cwd or Path.cwd()).resolve()
+    cfg_path = (path or working / CONFIG_NAME).resolve()
     if not cfg_path.exists():
         raise ConfigError(
             f"config not found: {cfg_path} (run `ckdn init` to create a starter config)"
@@ -311,6 +390,8 @@ def load_config(path: Path | None = None) -> Config:
         top=int(run_raw.get("top", 20)),
         max_snippet_lines=int(run_raw.get("max_snippet_lines", 12)),
         log_tail_lines=int(run_raw.get("log_tail_lines", 40)),
+        command_policy=_parse_command_policy(run_raw),
+        command_allowlist=_parse_command_allowlist(run_raw),
     )
 
     checks_raw = data.get("check", {})
@@ -324,4 +405,4 @@ def load_config(path: Path | None = None) -> Config:
         checks[name] = _parse_check(name, raw)
 
     _validate_aliases(checks)
-    return Config(root=cfg_path.parent, run=run, checks=checks)
+    return Config(config_path=cfg_path, cwd=working, run=run, checks=checks)

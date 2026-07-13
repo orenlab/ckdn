@@ -52,3 +52,11 @@ Out of scope (unless you can show a concrete exploit path):
   terminals.
 - Do not run untrusted check commands; `ckdn.toml` is trusted project
   configuration.
+- Parser artifact paths (`junit`, `report`, etc.) are resolved with
+  ``resolve()`` and must stay inside the run directory; absolute paths such
+  as ``/etc/passwd``, ``..`` segments, and symlink escapes are rejected before
+  any read (limits damage from a compromised agent editing check options).
+- Command argv paths are confined to the workspace ``cwd`` by default; extend
+  with ``command_policy = "off"`` only when you accept full subprocess scope.
+  Commit ``ckdn.lock.toml`` and run ``ckdn verify-config --locked`` in CI when
+  agents can edit ``ckdn.toml``.

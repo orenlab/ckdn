@@ -27,6 +27,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 
+class ArtifactPathError(ValueError):
+    """Parser artifact path escapes the run directory or cannot be resolved."""
+
+
 @dataclass(frozen=True)
 class Finding:
     """One unit of failure evidence (a failed test, a type error, a lint hit)."""
@@ -82,16 +86,45 @@ class ParseContext:
     max_snippet_lines: int
 
     def artifact(self, key: str, default: str) -> Path:
-        """Resolve an artifact path from parser options.
+        """Resolve an artifact path from parser options."""
+        raw = str(self.options.get(key, default))
+        return artifact_path(self.run_dir, raw)
 
-        Relative paths resolve against the run directory; ``{run_dir}`` is
-        substituted the same way it is in check commands.
-        """
-        raw = str(self.options.get(key, default)).replace(
-            "{run_dir}", str(self.run_dir)
-        )
-        path = Path(raw)
-        return path if path.is_absolute() else self.run_dir / path
+
+def resolve_under_run_dir(run_dir: Path, candidate: Path) -> Path:
+    """Resolve ``candidate`` and require the result stays inside ``run_dir``.
+
+    Follows symlinks; any target outside the run directory (including
+    ``/etc/passwd``-style absolute paths) raises :class:`ArtifactPathError`.
+    """
+    root = run_dir.resolve()
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise ArtifactPathError(
+            f"artifact path {candidate!s} could not be resolved: {exc}"
+        ) from exc
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ArtifactPathError(
+            f"artifact path {candidate!s} escapes run directory {run_dir}"
+        ) from exc
+    return resolved
+
+
+def artifact_path(run_dir: Path, raw: str) -> Path:
+    """Resolve a parser artifact template strictly under ``run_dir``.
+
+    ``{run_dir}`` is substituted first. Relative paths anchor under
+    ``run_dir``; absolute paths are accepted only when ``resolve()`` keeps
+    them inside ``run_dir`` (so ``/etc/passwd`` and ``..`` escapes are
+    rejected before any read).
+    """
+    substituted = raw.replace("{run_dir}", str(run_dir))
+    path = Path(substituted)
+    candidate = path if path.is_absolute() else run_dir / path
+    return resolve_under_run_dir(run_dir, candidate)
 
 
 class Parser(Protocol):

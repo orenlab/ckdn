@@ -13,6 +13,9 @@ keep = 20                  # prune old run directories beyond this count
 top = 20                   # max findings / top entries in a digest
 max_snippet_lines = 12     # max detail lines per finding
 log_tail_lines = 40        # log tail size on error / parse_mismatch
+# command_policy = "workspace"  # workspace | allowlist | off
+# [run.command_allowlist]
+# prefixes = ["make ", "./scripts/"]  # only when command_policy = allowlist
 
 # --- enabled -------------------------------------------------------
 
@@ -64,19 +67,39 @@ members = ["ruff"]
 # fail_fast = false
 # # members = ["ruff", "pylint", "bandit"]
 
+[check.format]
+command = "uv run ruff format --check ."
+# # command = "uv run black --check src tests"
+parser = "reformat"
+# timeout = 60
+# top = 20
+
+[check.pre_commit]
+command = "uv run pre-commit run --all-files"
+parser = "pre_commit"
+timeout = 600
+# # pre-push stage: add --hook-stage pre-push
+# # single hook: uv run pre-commit run <hook-id> --all-files
+
+[check.lock]
+command = "uv lock --check"
+parser = "generic"
+timeout = 60
+
+[check.style]
+members = ["format", "ruff"]
+# fail_fast = false
+
+[check.hooks]
+members = ["pre_commit"]
+# fail_fast = false
+
 # --- optional parsers (uncomment to enable) -----------------------
 
 # [check.pyright]
 # command = "uvx pyright --outputjson"
 # parser = "pyright"
 # timeout = 120
-# top = 20
-
-# [check.format]
-# command = "uv run ruff format --check ."
-# # command = "uv run black --check src tests"
-# parser = "reformat"
-# timeout = 60
 # top = 20
 
 # [check.pip_audit]
