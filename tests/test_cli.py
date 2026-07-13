@@ -67,6 +67,52 @@ def test_main_run_generic(tmp_path: Path, stub_execute: None, capsys: Any) -> No
     assert doc["check"] == "ok"
 
 
+def test_main_run_pre_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    cfg = _cfg(
+        tmp_path,
+        (
+            "[check.hooks]\n"
+            'command = "pre-commit run --all-files"\n'
+            'parser = "pre_commit"\n'
+        ),
+    )
+    log = """\
+Fail Hook................................................................Failed
+- hook id: fail-hook
+- exit code: 1
+
+boom
+"""
+
+    def _execute(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+    ) -> RunOutcome:
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=1,
+            log_text=log,
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.01,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr(app_run, "execute", _execute)
+    rc = cli.main(["run", "--config", str(cfg), "hooks"])
+    assert rc == 1
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["status"] == "fail"
+    assert doc["findings_total"] == 1
+    assert doc["findings"][0]["id"] == "fail-hook"
+    assert doc["summary"]["failed_hooks"] == ["fail-hook"]
+
+
 def test_main_unknown_check(tmp_path: Path) -> None:
     cfg = _cfg(
         tmp_path,
@@ -217,6 +263,48 @@ def test_main_extra_after_dashdash(
     assert seen["tokens"][-2:] == ["--flag", "1"]
 
 
+JUNIT_ALL_PASS = """\
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1">
+    <testcase classname="tests.ok" name="test_ok"/>
+  </testsuite>
+</testsuites>
+"""
+
+
+def test_main_run_cwd_separate_from_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    config_dir = tmp_path / "cfg"
+    worktree = tmp_path / "wt"
+    config_dir.mkdir()
+    worktree.mkdir()
+    cfg_path = config_dir / CONFIG_NAME
+    cfg_path.write_text(
+        '[run]\nruns_dir = ".agent-runs"\nkeep = 20\n\n'
+        '[check.pt]\ncommand = "true"\nparser = "pytest"\n',
+        encoding="utf-8",
+    )
+
+    def _execute(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+    ) -> RunOutcome:
+        assert cwd == worktree.resolve()
+        (run_dir / "junit.xml").write_text(JUNIT_ALL_PASS, encoding="utf-8")
+        return _outcome(run_dir, 0)
+
+    monkeypatch.setattr(app_run, "execute", _execute)
+    rc = cli.main(["run", "--config", str(cfg_path), "--cwd", str(worktree), "pt"])
+    assert rc == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["status"] == "pass"
+    assert (worktree / ".agent-runs").is_dir()
+
+
 def test_main_broken_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raising(_args: argparse.Namespace) -> int:
         raise BrokenPipeError
@@ -228,6 +316,18 @@ def test_main_broken_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "build_arg_parser", lambda: _Parser())
     monkeypatch.setattr(sys.stdout, "close", lambda: None)
     assert cli.main([]) == 0
+
+
+def test_main_verify_and_lock_config(tmp_path: Path, capsys: Any) -> None:
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    assert cli.main(["lock-config", "--config", str(cfg_path)]) == 0
+    assert "wrote" in capsys.readouterr().out
+    assert cli.main(["verify-config", "--config", str(cfg_path)]) == 0
+    assert capsys.readouterr().out.strip() == "ok"
+    assert cli.main(["verify-config", "--config", str(cfg_path), "--locked"]) == 0
 
 
 def test_run_one_rejects_alias_as_atomic(tmp_path: Path) -> None:

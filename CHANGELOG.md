@@ -9,6 +9,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.1.0] - 2026-07-13
+
+### Added
+
+- `pre_commit` parser for `pre-commit run` terminal output: per-hook
+  findings on failure, hook counts in summary, loud-failure guard when the
+  exit code and parsed failures disagree
+- Starter `ckdn.toml` enables `format`, `pre_commit`, and `lock`
+  (`uv lock --check`) checks plus `style` and `hooks` aliases
+- CLI `--cwd` flag and `CKDN_CWD` env var: subprocess working directory and
+  relative `runs_dir` resolve from invocation cwd, not the config file parent
+- MCP tools accept optional `cwd`; `ckdn-mcp` supports `--cwd`
+- Command policy (default ``workspace``): argv path tokens must resolve inside
+  ``cwd``; sensitive system locations are rejected; subprocess is not started on
+  violation (``rc=126``)
+- ``command_policy = "allowlist"`` with optional ``[run.command_allowlist]``
+  prefixes; ``off`` disables checks for exotic workflows
+- ``ckdn lock-config`` / ``ckdn verify-config`` (+ ``--locked``) for command
+  digest governance in CI
+
+### Fixed
+
+- Parser artifact paths: after `{run_dir}` substitution, absolute paths are
+  returned as-is instead of being joined under `run_dir` again (fixes
+  `parse_mismatch` when JUnit lives at an absolute path under the run directory)
+- Worktree / temp-config slices: a `ckdn.toml` under `/tmp` no longer forces
+  subprocess `cwd` to the config directory when the project lives elsewhere
+- Parser artifact reads are confined to the run directory after `resolve()`
+  (rejects `/etc/passwd`, `..` escapes, and symlink hops) before any file open
+
 ## [1.0.0] - 2026-07-11
 
 ### Added
@@ -29,5 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/orenlab/ckdn/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/orenlab/ckdn/releases/tag/v1.0.0

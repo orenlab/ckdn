@@ -18,12 +18,15 @@ def register(mcp: Any, ctx: ServerContext) -> None:
             "Does not re-run checks."
         ),
     )
-    def get_digest(run: str | None = None, config: str | None = None) -> dict[str, Any]:
+    def get_digest(
+        run: str | None = None, config: str | None = None, cwd: str | None = None
+    ) -> dict[str, Any]:
         """Return a stored digest.
 
         Args:
             run: Run directory name; omit for latest.
             config: Optional path to ckdn.toml.
+            cwd: Optional working directory for resolving relative runs_dir.
         """
-        cfg = ctx.load(config)
+        cfg = ctx.load(config, cwd)
         return app_get_digest(cfg, run)

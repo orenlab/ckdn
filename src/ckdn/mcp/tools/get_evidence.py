@@ -27,6 +27,7 @@ def register(mcp: Any, ctx: ServerContext) -> None:
         limit: int = DEFAULT_EVIDENCE_LIMIT,
         include_meta: bool = False,
         config: str | None = None,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
         """Return bounded evidence.
 
@@ -37,8 +38,9 @@ def register(mcp: Any, ctx: ServerContext) -> None:
             limit: Max lines to return (capped at 2000).
             include_meta: Include meta.json when present.
             config: Optional path to ckdn.toml.
+            cwd: Optional working directory for resolving relative runs_dir.
         """
-        cfg = ctx.load(config)
+        cfg = ctx.load(config, cwd)
         return app_get_evidence(
             cfg,
             ref=run,

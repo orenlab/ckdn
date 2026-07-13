@@ -17,11 +17,14 @@ def register(mcp: Any, ctx: ServerContext) -> None:
             "List atomic checks and aliases from ckdn.toml. Does not run anything."
         ),
     )
-    def list_checks(config: str | None = None) -> dict[str, Any]:
+    def list_checks(
+        config: str | None = None, cwd: str | None = None
+    ) -> dict[str, Any]:
         """Return configured checks.
 
         Args:
             config: Optional path to ckdn.toml (else CKDN_CONFIG or ./ckdn.toml).
+            cwd: Optional working directory for resolving relative runs_dir.
         """
-        cfg = ctx.load(config)
+        cfg = ctx.load(config, cwd)
         return {"checks": app_list_checks(cfg)}

@@ -20,14 +20,17 @@ def register(mcp: Any, ctx: ServerContext) -> None:
             "Member fail/error statuses are normal results, not tool errors."
         ),
     )
-    def run_group(alias: str, config: str | None = None) -> dict[str, Any]:
+    def run_group(
+        alias: str, config: str | None = None, cwd: str | None = None
+    ) -> dict[str, Any]:
         """Run an alias group.
 
         Args:
             alias: Alias check name from ckdn.toml.
             config: Optional path to ckdn.toml.
+            cwd: Optional working directory for subprocesses and relative runs_dir.
         """
-        cfg = ctx.load(config)
+        cfg = ctx.load(config, cwd)
         item = cfg.checks.get(alias)
         if item is None:
             raise UnknownCheckError(

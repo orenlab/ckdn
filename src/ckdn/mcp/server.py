@@ -25,7 +25,7 @@ def _import_fastmcp() -> Any:
     return FastMCP
 
 
-def create_server(*, config: Path | None = None) -> Any:
+def create_server(*, config: Path | None = None, cwd: Path | None = None) -> Any:
     """Build a FastMCP server with all ckdn tools registered."""
     fastmcp_cls = _import_fastmcp()
     mcp = fastmcp_cls(
@@ -39,7 +39,7 @@ def create_server(*, config: Path | None = None) -> Any:
         ),
         version=__version__,
     )
-    ctx = ServerContext(default_config=config)
+    ctx = ServerContext(default_config=config, default_cwd=cwd)
     register_all(mcp, ctx)
     return mcp
 
@@ -51,13 +51,18 @@ def main(argv: list[str] | None = None) -> None:
         "--config",
         help="default path to ckdn.toml (else CKDN_CONFIG or ./ckdn.toml)",
     )
+    parser.add_argument(
+        "--cwd",
+        help="default working directory for subprocesses and relative runs_dir",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     config = Path(args.config) if args.config else None
+    cwd = Path(args.cwd).resolve() if args.cwd else None
     # Pin the transport: ``ckdn-mcp`` is a stdio entry point only. Passing it
     # explicitly overrides any FASTMCP_TRANSPORT env default, so this process
     # can never be flipped into an unauthenticated HTTP listener.
-    create_server(config=config).run(transport="stdio")
+    create_server(config=config, cwd=cwd).run(transport="stdio")
 
 
 if __name__ == "__main__":

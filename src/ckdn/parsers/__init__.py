@@ -10,6 +10,7 @@ from ckdn.parsers.coverage_xml import CoverageXmlParser
 from ckdn.parsers.generic import GenericParser
 from ckdn.parsers.mypy import MypyParser
 from ckdn.parsers.pip_audit_json import PipAuditJsonParser
+from ckdn.parsers.pre_commit_text import PreCommitTextParser
 from ckdn.parsers.pylint_json import PylintJsonParser
 from ckdn.parsers.pyright_json import PyrightJsonParser
 from ckdn.parsers.pytest_junit import PytestJUnitParser
@@ -31,6 +32,7 @@ _REGISTRY: dict[str, Parser] = {
         PyrightJsonParser(),
         ReformatTextParser(),
         PipAuditJsonParser(),
+        PreCommitTextParser(),
         BanditJsonParser(),
         PylintJsonParser(),
         SarifParser(),

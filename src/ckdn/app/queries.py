@@ -11,6 +11,7 @@ from typing import Any
 from ckdn.app.errors import ArtifactError, DigestError, RunNotFoundError
 from ckdn.config import Config
 from ckdn.digest import DIGEST_NAME, META_NAME, list_artifacts
+from ckdn.parsers.base import ArtifactPathError, resolve_under_run_dir
 from ckdn.runner import LOG_NAME, list_run_dirs, resolve_run_dir
 
 DEFAULT_EVIDENCE_LIMIT = 200
@@ -146,11 +147,9 @@ def _safe_artifact_path(run_dir: Path, artifact: str) -> Path:
             f"artifact '{artifact}' not found in run {run_dir.name}; "
             f"available: {', '.join(sorted(allowed))}"
         )
-    target = (run_dir / artifact).resolve()
-    root = run_dir.resolve()
     try:
-        target.relative_to(root)
-    except ValueError as exc:
+        target = resolve_under_run_dir(run_dir, run_dir / artifact)
+    except ArtifactPathError as exc:
         raise ArtifactError(
             f"artifact path escapes run directory: {artifact!r}"
         ) from exc

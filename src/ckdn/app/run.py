@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from ckdn.app.errors import (
     AliasExtraArgsError,
     NotAliasError,
@@ -12,6 +14,7 @@ from ckdn.app.errors import (
     UnknownParserError,
 )
 from ckdn.app.types import AliasRunResult, AtomicRunResult
+from ckdn.command_policy import CommandPolicyError, validate_command
 from ckdn.config import CheckConfig, Config
 from ckdn.digest import (
     META_NAME,
@@ -26,6 +29,9 @@ from ckdn.parsers import available_parsers, get_parser
 from ckdn.parsers.base import ParseContext, ParseResult
 from ckdn.reconcile import reconcile
 from ckdn.runner import (
+    LOG_NAME,
+    RC_POLICY,
+    RunOutcome,
     build_tokens,
     create_run_dir,
     execute,
@@ -59,33 +65,64 @@ def run_one(
 
     run_dir = create_run_dir(cfg.runs_dir, check.name)
     tokens = build_tokens(check.command, run_dir, list(extra or ()))
-    outcome = execute(tokens, cwd=cfg.root, run_dir=run_dir, timeout=check.timeout)
-
+    policy_blocked = False
     try:
-        result = parser.parse(
-            ParseContext(
-                run_dir=run_dir,
-                log_text=outcome.log_text,
-                rc=outcome.rc,
-                options=check.options,
-                top=int(check.options.get("top", cfg.run.top)),
-                max_snippet_lines=cfg.run.max_snippet_lines,
-            )
+        validate_command(
+            check.command,
+            list(extra or ()),
+            cwd=cfg.cwd,
+            policy=cfg.run.command_policy,
+            allowlist_prefixes=cfg.run.command_allowlist,
+            tokens=tokens,
         )
-    except Exception as exc:  # a parser bug must never hide a result
+    except CommandPolicyError as exc:
+        policy_blocked = True
+        outcome = RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=RC_POLICY,
+            log_text="",
+            started_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=str(exc),
+        )
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         result = ParseResult(
             parser_ok=False,
-            notes=[f"parser '{check.parser}' crashed: {exc!r}"],
+            notes=[str(exc)],
+            evidence_expected=True,
+            include_log_tail=True,
         )
-    if outcome.exec_note:
-        result.notes.insert(0, outcome.exec_note)
+    else:
+        outcome = execute(tokens, cwd=cfg.cwd, run_dir=run_dir, timeout=check.timeout)
+
+    if not policy_blocked:
+        try:
+            result = parser.parse(
+                ParseContext(
+                    run_dir=run_dir,
+                    log_text=outcome.log_text,
+                    rc=outcome.rc,
+                    options=check.options,
+                    top=int(check.options.get("top", cfg.run.top)),
+                    max_snippet_lines=cfg.run.max_snippet_lines,
+                )
+            )
+        except Exception as exc:  # a parser bug must never hide a result
+            result = ParseResult(
+                parser_ok=False,
+                notes=[f"parser '{check.parser}' crashed: {exc!r}"],
+            )
+        if outcome.exec_note:
+            result.notes.insert(0, outcome.exec_note)
 
     status, reason, include_tail = reconcile(outcome.rc, result)
 
     meta = build_meta(check=check.name, parser=check.parser, outcome=outcome)
     (run_dir / META_NAME).write_text(dump_json(meta), encoding="utf-8")
     try:
-        run_dir_rel = str(run_dir.relative_to(cfg.root))
+        run_dir_rel = str(run_dir.relative_to(cfg.cwd))
     except ValueError:
         run_dir_rel = str(run_dir)
     digest = build_digest(

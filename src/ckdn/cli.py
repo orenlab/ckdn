@@ -42,6 +42,7 @@ from ckdn.config import (
     ConfigError,
     load_config,
 )
+from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
 from ckdn.runner import prune
 
@@ -52,7 +53,8 @@ def _fail(message: str) -> int:
 
 
 def _load(args: argparse.Namespace) -> Config:
-    return load_config(Path(args.config) if args.config else None)
+    cwd = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
+    return load_config(Path(args.config) if args.config else None, cwd=cwd)
 
 
 def run_one(
@@ -126,6 +128,26 @@ def cmd_gc(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lock_config(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    target = Path(args.output) if args.output else cfg.config_path.parent / LOCK_NAME
+    written = write_config_lock(cfg, target)
+    print(f"wrote {written}")
+    return 0
+
+
+def cmd_verify_config(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    lock_path = Path(args.lock_file) if args.lock_file else None
+    errors = verify_config(cfg, locked=args.locked, lock_path=lock_path)
+    if errors:
+        for line in errors:
+            print(f"ckdn: {line}", file=sys.stderr)
+        return 1
+    print("ok")
+    return 0
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     target = Path.cwd() / CONFIG_NAME
     if target.exists():
@@ -146,6 +168,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     def add_config(p: argparse.ArgumentParser) -> None:
         p.add_argument("--config", help=f"path to {CONFIG_NAME}")
+        p.add_argument(
+            "--cwd",
+            help="working directory for subprocesses and relative runs_dir "
+            "(default: invocation directory)",
+        )
 
     p_run = sub.add_parser("run", help="run a configured check and emit its digest")
     add_config(p_run)
@@ -180,6 +207,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
     p_init.set_defaults(fn=cmd_init)
+
+    p_lock = sub.add_parser(
+        "lock-config",
+        help="write ckdn.lock.toml command digests for CI governance",
+    )
+    add_config(p_lock)
+    p_lock.add_argument(
+        "-o",
+        "--output",
+        help=f"lock file path (default: next to config as {LOCK_NAME})",
+    )
+    p_lock.set_defaults(fn=cmd_lock_config)
+
+    p_verify = sub.add_parser(
+        "verify-config",
+        help="validate command policy (and optional lock file) without running checks",
+    )
+    add_config(p_verify)
+    p_verify.add_argument(
+        "--locked",
+        action="store_true",
+        help=f"also require commands to match {LOCK_NAME}",
+    )
+    p_verify.add_argument(
+        "--lock-file",
+        help=f"path to lock file (default: {LOCK_NAME} beside config)",
+    )
+    p_verify.set_defaults(fn=cmd_verify_config)
 
     return parser
 
