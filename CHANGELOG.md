@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-13
+
+### Added
+
+- Shared MCP agent guidance (`ckdn.mcp.guidance`): server instructions and
+  `cwd` hints on every config-using tool description
+- `examples/claude/CLAUDE.md` standing-rule template for ckdn + worktree cwd
+- MCP worktree contract test (`cwd` per call when config lives elsewhere)
+
+### Changed
+
+- `verified-fix-loop` skill: MCP tool mapping, `cwd`/worktree rules,
+  `pre_commit` / `hooks`, CLI vs MCP division
+- README agent/MCP sections: `CKDN_CWD` in client configs, worktree examples,
+  shared `cwd` parameter on all tools
+
 ## [1.1.0] - 2026-07-13
 
 ### Added
@@ -61,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/orenlab/ckdn/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/orenlab/ckdn/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/orenlab/ckdn/releases/tag/v1.0.0

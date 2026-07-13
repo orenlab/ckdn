@@ -8,13 +8,15 @@ from typing import Any
 
 from ckdn.app import list_checks as app_list_checks
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import CWD_TOOL_HINT
 
 
 def register(mcp: Any, ctx: ServerContext) -> None:
     @mcp.tool(  # type: ignore[untyped-decorator]
         name="list_checks",
         description=(
-            "List atomic checks and aliases from ckdn.toml. Does not run anything."
+            "List atomic checks and aliases from ckdn.toml. Does not run anything. "
+            f"{CWD_TOOL_HINT}"
         ),
     )
     def list_checks(

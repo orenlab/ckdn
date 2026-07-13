@@ -8,6 +8,7 @@ from typing import Any
 
 from ckdn.app import get_digest as app_get_digest
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import CWD_TOOL_HINT
 
 
 def register(mcp: Any, ctx: ServerContext) -> None:
@@ -15,7 +16,8 @@ def register(mcp: Any, ctx: ServerContext) -> None:
         name="get_digest",
         description=(
             "Load a stored ckdn.digest/2 for a run id or the latest run. "
-            "Does not re-run checks."
+            "Does not re-run checks. "
+            f"{CWD_TOOL_HINT}"
         ),
     )
     def get_digest(
