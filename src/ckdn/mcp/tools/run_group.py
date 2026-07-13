@@ -9,6 +9,7 @@ from typing import Any
 from ckdn.app import NotAliasError, run_alias
 from ckdn.app.errors import UnknownCheckError
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import CWD_TOOL_HINT
 
 
 def register(mcp: Any, ctx: ServerContext) -> None:
@@ -17,7 +18,8 @@ def register(mcp: Any, ctx: ServerContext) -> None:
         description=(
             "Run an alias (members) from ckdn.toml and return "
             "{aggregate, exit_code}. Does not accept extra_args. "
-            "Member fail/error statuses are normal results, not tool errors."
+            "Member fail/error statuses are normal results, not tool errors. "
+            f"{CWD_TOOL_HINT}"
         ),
     )
     def run_group(

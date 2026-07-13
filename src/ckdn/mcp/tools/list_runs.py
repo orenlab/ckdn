@@ -8,12 +8,16 @@ from typing import Any
 
 from ckdn.app import list_runs as app_list_runs
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import CWD_TOOL_HINT
 
 
 def register(mcp: Any, ctx: ServerContext) -> None:
     @mcp.tool(  # type: ignore[untyped-decorator]
         name="list_runs",
-        description="List recent ckdn run directories with check/status summaries.",
+        description=(
+            "List recent ckdn run directories with check/status summaries. "
+            f"{CWD_TOOL_HINT}"
+        ),
     )
     def list_runs(
         limit: int = 10, config: str | None = None, cwd: str | None = None

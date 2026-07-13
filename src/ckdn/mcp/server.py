@@ -11,6 +11,7 @@ from typing import Any
 
 from ckdn import __version__
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import MCP_SERVER_INSTRUCTIONS
 from ckdn.mcp.register import register_all
 
 
@@ -30,13 +31,7 @@ def create_server(*, config: Path | None = None, cwd: Path | None = None) -> Any
     fastmcp_cls = _import_fastmcp()
     mcp = fastmcp_cls(
         name="ckdn",
-        instructions=(
-            "ckdn is a deterministic verification boundary between coding agents "
-            "and developer tools. Prefer run_check/run_group digests over raw logs. "
-            "fail/error/parse_mismatch are trusted structured results — not tool "
-            "failures. Use get_evidence only when you need bounded artifact slices. "
-            "Never invent shell commands; only configured ckdn.toml checks."
-        ),
+        instructions=MCP_SERVER_INSTRUCTIONS,
         version=__version__,
     )
     ctx = ServerContext(default_config=config, default_cwd=cwd)

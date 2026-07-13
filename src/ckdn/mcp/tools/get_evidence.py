@@ -9,6 +9,7 @@ from typing import Any
 from ckdn.app import DEFAULT_EVIDENCE_LIMIT
 from ckdn.app import get_evidence as app_get_evidence
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import CWD_TOOL_HINT
 
 
 def register(mcp: Any, ctx: ServerContext) -> None:
@@ -17,7 +18,8 @@ def register(mcp: Any, ctx: ServerContext) -> None:
         description=(
             "Read bounded evidence for a run. Without artifact: digest findings/"
             "gates/notes/log_tail + artifact index (never full.log body). "
-            "With artifact: line-sliced file contents (default 200 lines, max 2000)."
+            "With artifact: line-sliced file contents (default 200 lines, max 2000). "
+            f"{CWD_TOOL_HINT}"
         ),
     )
     def get_evidence(

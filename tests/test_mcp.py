@@ -11,7 +11,9 @@ import pytest
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
+from worktree_fixtures import make_worktree_slice  # noqa: E402
 
+from ckdn.mcp.guidance import MCP_SERVER_INSTRUCTIONS  # noqa: E402
 from ckdn.mcp.server import create_server  # noqa: E402
 
 
@@ -30,6 +32,44 @@ def _data(result: object) -> Any:
     if data is not None:
         return data
     return getattr(result, "structured_content", None)
+
+
+def test_mcp_server_instructions_document_cwd_worktree() -> None:
+    mcp = create_server()
+    instructions = getattr(mcp, "instructions", None) or MCP_SERVER_INSTRUCTIONS
+    assert instructions == MCP_SERVER_INSTRUCTIONS
+    lowered = instructions.lower()
+    assert "cwd" in lowered
+    assert "worktree" in lowered or "outside the project" in lowered
+    assert "lock-config" in lowered or "verify-config" in lowered
+
+
+@pytest.mark.asyncio
+async def test_mcp_per_call_cwd_worktree_slice(tmp_path: Path) -> None:
+    """Config outside project: per-call cwd anchors runs_dir and subprocess."""
+    slice_ = make_worktree_slice(
+        tmp_path,
+        body=(
+            '[run]\nruns_dir = ".agent-runs"\nkeep = 20\n\n'
+            '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        ),
+    )
+    mcp = create_server()
+    async with Client(mcp) as client:
+        passed = await client.call_tool(
+            "run_check",
+            {
+                "check": "ok",
+                "config": str(slice_.cfg_path),
+                "cwd": str(slice_.worktree),
+            },
+        )
+        assert getattr(passed, "is_error", False) is False
+        body = _data(passed)
+        assert isinstance(body, dict)
+        assert body["digest"]["status"] == "pass"
+        assert (slice_.worktree / ".agent-runs").is_dir()
+        assert not (slice_.config_dir / ".agent-runs").exists()
 
 
 @pytest.mark.asyncio

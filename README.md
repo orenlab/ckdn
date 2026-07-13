@@ -197,6 +197,7 @@ for readability; `ckdn show` does the same for stored digests):
   ]
 }
 ```
+
 </details>
 
 On `error` / `parse_mismatch` the digest additionally carries a bounded
@@ -236,6 +237,7 @@ evidence:
   ]
 }
 ```
+
 </details>
 
 The aggregate contract:
@@ -321,6 +323,7 @@ members = ["format", "ruff"]     # format + lint atomics
 [check.hooks]
 members = ["pre_commit"]           # full hook suite
 ```
+
 </details>
 
 **Atomic** check: `command` + `parser` (required), optional `timeout`
@@ -386,21 +389,21 @@ Alias stdout is **only** the aggregate; member digests stay under
 
 Prefer machine-readable artifacts over terminal text.
 
-| parser      | reads                                  | command must include                                                                                                                                                                   |
-|-------------|----------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pytest`    | JUnit XML                              | `--junitxml {run_dir}/junit.xml`                                                                                                                                                       |
-| `coverage`  | coverage XML (+ JUnit if present)      | `--cov-report=xml:{run_dir}/coverage.xml`                                                                                                                                              |
-| `ruff`      | JSON file                              | `--output-format json --output-file {run_dir}/ruff.json`                                                                                                                               |
-| `ty`        | terminal text                          | — (drift guards)                                                                                                                                                                       |
-| `mypy`      | text, or NDJSON with `format = "json"` | `--output json` (mypy ≥ 1.11) for NDJSON                                                                                                                                               |
-| `pyright`   | JSON in log                            | `--outputjson`                                                                                                                                                                         |
-| `reformat`  | black / ruff-format text               | `--check` (no `--diff`)                                                                                                                                                                |
-| `pip_audit` | JSON file                              | `-f json -o {run_dir}/pip-audit.json`                                                                                                                                                  |
-| `bandit`    | JSON file                              | `-f json -o {run_dir}/bandit.json`                                                                                                                                                     |
-| `pylint`    | json2 (pylint ≥ 3.0)                   | `--output-format=json2:{run_dir}/pylint.json`                                                                                                                                          |
-| `sarif`     | SARIF file                             | whatever flag writes SARIF to `{run_dir}/report.sarif` (semgrep `--sarif-output`, gitleaks `--report-format sarif --report-path`, trivy `--format sarif -o`); artifact option `report` |
-| `pre_commit` | `pre-commit run` terminal text         | `pre-commit run` (use `--all-files` for full-repo parity); per-hook findings on failure                                                                                                  |
-| `generic`   | exit code only                         | —                                                                                                                                                                                      |
+| parser       | reads                                  | command must include                                                                                                                                                                   |
+|--------------|----------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `pytest`     | JUnit XML                              | `--junitxml {run_dir}/junit.xml`                                                                                                                                                       |
+| `coverage`   | coverage XML (+ JUnit if present)      | `--cov-report=xml:{run_dir}/coverage.xml`                                                                                                                                              |
+| `ruff`       | JSON file                              | `--output-format json --output-file {run_dir}/ruff.json`                                                                                                                               |
+| `ty`         | terminal text                          | — (drift guards)                                                                                                                                                                       |
+| `mypy`       | text, or NDJSON with `format = "json"` | `--output json` (mypy ≥ 1.11) for NDJSON                                                                                                                                               |
+| `pyright`    | JSON in log                            | `--outputjson`                                                                                                                                                                         |
+| `reformat`   | black / ruff-format text               | `--check` (no `--diff`)                                                                                                                                                                |
+| `pip_audit`  | JSON file                              | `-f json -o {run_dir}/pip-audit.json`                                                                                                                                                  |
+| `bandit`     | JSON file                              | `-f json -o {run_dir}/bandit.json`                                                                                                                                                     |
+| `pylint`     | json2 (pylint ≥ 3.0)                   | `--output-format=json2:{run_dir}/pylint.json`                                                                                                                                          |
+| `sarif`      | SARIF file                             | whatever flag writes SARIF to `{run_dir}/report.sarif` (semgrep `--sarif-output`, gitleaks `--report-format sarif --report-path`, trivy `--format sarif -o`); artifact option `report` |
+| `pre_commit` | `pre-commit run` terminal text         | `pre-commit run` (use `--all-files` for full-repo parity); per-hook findings on failure                                                                                                |
+| `generic`    | exit code only                         | —                                                                                                                                                                                      |
 
 **Guards (loud failure, never silent green):** count / clean-marker
 cross-checks on text parsers; missing reports with `rc ≠ 0` → `error`;
@@ -419,34 +422,51 @@ check.
 
 ## Agent integration
 
-Three layers, increasing strength:
+Four layers, increasing strength:
 
 1. **Standing rule** (`CLAUDE.md` / equivalent) — run only via
-   `ckdn run <check>`; read the digest; `pass` is the only green; never
-   edit `.agent-runs/` or weaken checks to go green.
+   `ckdn run <check>` or MCP `run_check` / `run_group`; read the digest;
+   `pass` is the only green; never edit `.agent-runs/` or weaken checks to
+   go green. Template: `examples/claude/CLAUDE.md`.
 2. **Skill** — `examples/claude/skills/verified-fix-loop/SKILL.md`
    (copy into the agent’s skills dir). Bounded fix loop, digest-only
-   reading, forbidden moves.
+   reading, forbidden moves, MCP tool mapping, and `cwd` for worktrees.
 3. **Hooks / CI** — `ckdn run` passes red exit codes through, so it drops
    into the same slots as the raw tool, with digests as a side effect.
+   Use `ckdn lock-config` + `ckdn verify-config --locked` in CI for
+   command governance (not exposed as MCP tools).
+4. **MCP** (optional) — `ckdn[mcp]` / `ckdn-mcp` when the client should
+   call ckdn over the protocol instead of shelling out (see below).
 
 Division of labor: constitution → procedure → instrumentation →
 enforcement. Digests never contain instructions to the agent (prompt-
 injection surface and policy fork).
 
+**Working directory:** subprocesses and relative `.agent-runs/` resolve
+from **cwd**, not from where `ckdn.toml` lives. CLI: `--cwd` /
+`CKDN_CWD`. MCP: per-call `cwd` on every config-using tool, or
+`CKDN_CWD` / `ckdn-mcp --cwd` as server defaults. When the config file
+is outside the project tree (worktree, Glass slice, temp config), pass the
+project root as cwd on every run — otherwise tools execute in the wrong
+directory.
+
 ## MCP (optional)
 
-The fourth integration path: when an agent should call ckdn over MCP
-instead of shelling out, install the FastMCP transport:
+When an agent should call ckdn over MCP instead of shelling out, install
+the FastMCP transport:
 
 ```bash
 uv tool install 'ckdn[mcp]'
 ```
 
 `ckdn-mcp` speaks **stdio** only. Config resolution: `--config` →
-`$CKDN_CONFIG` → `./ckdn.toml` (cwd). Working directory: `--cwd` →
-`$CKDN_CWD` → process cwd. Every client shares the schema
-`{ command, args, env }`; only the file name and format differ.
+`$CKDN_CONFIG` → `./ckdn.toml` (process cwd). Working directory:
+`--cwd` → `$CKDN_CWD` → process cwd. **Subprocesses and relative
+`runs_dir` anchor on cwd, not the config file parent** — pass `cwd` on
+every tool call when config and project root differ.
+
+Every client shares the schema `{ command, args, env }`; only the file
+name and format differ.
 
 <details>
 <summary><b>Claude Code</b> — <code>.mcp.json</code> (project-scoped, committed)</summary>
@@ -464,12 +484,17 @@ or commit a `.mcp.json` at the repo root (Claude Code expands `${VAR}`):
       "command": "ckdn-mcp",
       "args": [],
       "env": {
-        "CKDN_CONFIG": "${CKDN_CONFIG:-ckdn.toml}"
+        "CKDN_CONFIG": "${CKDN_CONFIG:-ckdn.toml}",
+        "CKDN_CWD": "${CKDN_CWD:-}"
       }
     }
   }
 }
 ```
+
+Set `CKDN_CWD` when the MCP server process cwd is not the project root
+(e.g. monorepo subfolder). For worktree slices, prefer per-call `cwd` on
+each tool instead of a fixed env default.
 
 </details>
 
@@ -483,12 +508,15 @@ or commit a `.mcp.json` at the repo root (Claude Code expands `${VAR}`):
       "command": "ckdn-mcp",
       "args": [],
       "env": {
-        "CKDN_CONFIG": "/absolute/path/to/ckdn.toml"
+        "CKDN_CONFIG": "/absolute/path/to/ckdn.toml",
+        "CKDN_CWD": "/absolute/path/to/project-root"
       }
     }
   }
 }
 ```
+
+Omit `CKDN_CWD` when the server already starts in the project root.
 
 </details>
 
@@ -504,7 +532,8 @@ Settings → Developer → Edit Config, same schema:
       "command": "ckdn-mcp",
       "args": [],
       "env": {
-        "CKDN_CONFIG": "/absolute/path/to/ckdn.toml"
+        "CKDN_CONFIG": "/absolute/path/to/ckdn.toml",
+        "CKDN_CWD": "/absolute/path/to/project-root"
       }
     }
   }
@@ -520,12 +549,32 @@ Settings → Developer → Edit Config, same schema:
 [mcp_servers.ckdn]
 command = "ckdn-mcp"
 args = []
-env = { CKDN_CONFIG = "/absolute/path/to/ckdn.toml" }
+env = { CKDN_CONFIG = "/absolute/path/to/ckdn.toml", CKDN_CWD = "/absolute/path/to/project-root" }
 ```
 
 </details>
 
-Tools (thin adapter over the same application layer as the CLI):
+<details>
+<summary><b>Worktree / temp config</b> — per-call <code>cwd</code></summary>
+
+When `ckdn.toml` lives outside the project tree, pass **project root**
+as `cwd` on every MCP tool (same as CLI `--cwd`):
+
+```json
+{
+  "check": "tests",
+  "config": "/tmp/ckdn.toml",
+  "cwd": "/path/to/worktree"
+}
+```
+
+Server instructions and tool descriptions document this; agents that
+only read JSON Schema still see optional `cwd` on all config-using tools.
+
+</details>
+
+Tools (thin adapter over the same application layer as the CLI). All
+config-using tools accept optional `config` and `cwd`:
 
 | Tool           | Purpose                                                               |
 |----------------|-----------------------------------------------------------------------|
@@ -547,6 +596,7 @@ Trust rules:
   `.agent-runs/` are `isError`, not silent reads.
 - `exit_code` in tool results is a convenience mirror of the digest’s
   `rc`; the digest is the source of truth.
+- `lock-config` / `verify-config` are CLI/CI governance — not MCP tools.
 - Core CLI remains stdlib-only; FastMCP is the optional extra.
 
 ## Custom parsers

@@ -9,6 +9,7 @@ from typing import Any
 from ckdn.app import NotAtomicError, run_one
 from ckdn.app.errors import UnknownCheckError
 from ckdn.mcp.context import ServerContext
+from ckdn.mcp.guidance import CWD_TOOL_HINT
 
 
 def register(mcp: Any, ctx: ServerContext) -> None:
@@ -18,7 +19,8 @@ def register(mcp: Any, ctx: ServerContext) -> None:
             "Run one atomic check from ckdn.toml and return "
             "{digest: ckdn.digest/2, exit_code}. "
             "fail/error/parse_mismatch are normal results, not tool errors. "
-            "Aliases must use run_group. Never returns full.log."
+            "Aliases must use run_group. Never returns full.log. "
+            f"{CWD_TOOL_HINT}"
         ),
     )
     def run_check(

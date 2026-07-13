@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from worktree_fixtures import make_worktree_slice
 
 from ckdn.command_policy import (
     CommandPolicyError,
@@ -178,19 +179,16 @@ def test_command_digest_stable() -> None:
 
 def test_worktree_slice_command_and_artifact_paths(tmp_path: Path) -> None:
     """Config in /tmp-style dir, cwd = worktree: policy + artifact paths stay valid."""
-    config_dir = tmp_path / "cfg"
-    worktree = tmp_path / "wt"
-    config_dir.mkdir()
-    worktree.mkdir()
-    cfg_path = config_dir / "ckdn.toml"
-    cfg_path.write_text(
-        '[run]\nruns_dir = ".agent-runs"\n\n'
-        "[check.pt]\n"
-        'command = "uv run pytest -q --junitxml {run_dir}/junit.xml"\n'
-        'parser = "pytest"\n',
-        encoding="utf-8",
+    slice_ = make_worktree_slice(
+        tmp_path,
+        body=(
+            '[run]\nruns_dir = ".agent-runs"\n\n'
+            "[check.pt]\n"
+            'command = "uv run pytest -q --junitxml {run_dir}/junit.xml"\n'
+            'parser = "pytest"\n'
+        ),
     )
-    cfg = load_config(cfg_path, cwd=worktree)
+    cfg = load_config(slice_.cfg_path, cwd=slice_.worktree)
     run_dir = cfg.runs_dir / "20260713T000000Z-pt"
     run_dir.mkdir(parents=True)
     check = cfg.checks["pt"]
@@ -221,7 +219,7 @@ def test_worktree_slice_command_and_artifact_paths(tmp_path: Path) -> None:
         )
     )
     assert result.parser_ok
-    assert cfg.runs_dir == worktree / ".agent-runs"
+    assert cfg.runs_dir == slice_.worktree / ".agent-runs"
 
 
 def test_run_one_policy_violation_no_subprocess(
