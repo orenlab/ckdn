@@ -226,13 +226,14 @@ evidence:
   "members": [
     {
       "check": "ruff",
-      "status": "fail",
-      "rc": 1,
-      "run_dir": ".agent-runs/20260707T101500Z-ruff"
+      "status": "pass",
+      "rc": 0
     },
     {
       "check": "pylint",
-      "status": "skipped"
+      "status": "fail",
+      "rc": 1,
+      "run_dir": ".agent-runs/20260707T101500Z-pylint"
     }
   ]
 }
@@ -242,15 +243,16 @@ evidence:
 
 The aggregate contract:
 
-- `status` — `pass` iff every member passed; otherwise the first
-  non-green member’s status.
-- `rc` (also the process exit code) — follows the same pass-through
-  rule as atomic runs: the first non-green member’s exit code, or `1`
-  if that member’s own `rc` was `0` (gate failure / mismatch).
-- `fail_fast = true` (default) stops at the first non-green member;
-  members not reached are listed as `"skipped"`. With
-  `fail_fast = false` all members run and every entry carries a real
-  status.
+- `status` — `pass` iff every member passed; otherwise `fail`. The
+  aggregate collapses to pass/fail; a member’s own `error` /
+  `parse_mismatch` shows only in that member’s digest.
+- `rc` (also the process exit code) — the first member’s nonzero exit
+  code (clamped 1–255), else `1` if any member is non-green while its
+  own `rc` was `0` (gate failure / mismatch), else `0`.
+- `fail_fast = true` (default) stops after the first non-green member;
+  members after it are **not run** and do not appear in the aggregate —
+  `members` lists only the checks that actually ran. With
+  `fail_fast = false` every member runs and appears with a real status.
 - Extra args after `--` are rejected on aliases — pass them to the
   atomic check (`ckdn run ruff -- -x`).
 
@@ -290,7 +292,7 @@ command = "uv run ty check"
 parser = "ty"
 
 [check.mypy]
-command = "uv run mypy src --output json"
+command = "uv run mypy --output json"
 parser = "mypy"
 format = "json"
 
