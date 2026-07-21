@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import cast
 
 from ckdn import __version__
+from ckdn.annotate import to_github, to_sarif
 from ckdn.app import (
     AliasRunResult,
     AppError,
@@ -170,6 +171,21 @@ def cmd_verify_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_annotate(args: argparse.Namespace) -> int:
+    """Project a stored digest's findings to CI annotations or SARIF."""
+    cfg = _load(args)
+    try:
+        digest = get_digest(cfg, args.ref)
+    except AppError as exc:
+        return _fail(str(exc))
+    if args.format == "sarif":
+        print(dump_json_pretty(to_sarif(digest)), end="")
+    else:
+        for line in to_github(digest):
+            print(line)
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Static pre-flight diagnostics: executables on PATH + parser/command fit.
 
@@ -288,6 +304,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
     p_init.set_defaults(fn=cmd_init)
+
+    p_annotate = sub.add_parser(
+        "annotate",
+        help="render a stored digest's findings as CI annotations or SARIF",
+    )
+    add_config(p_annotate)
+    p_annotate.add_argument(
+        "ref", nargs="?", help="run directory name (latest default)"
+    )
+    p_annotate.add_argument(
+        "--format",
+        choices=["github", "sarif"],
+        default="github",
+        help="github workflow commands (default) or a SARIF 2.1.0 document",
+    )
+    p_annotate.set_defaults(fn=cmd_annotate)
 
     p_doctor = sub.add_parser(
         "doctor",

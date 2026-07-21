@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ckdn run --all [--fail-fast]`: run every atomic check in config order and
   emit one `ckdn.aggregate/1` (`alias = "*"`); a single "verify the project"
   step for CI
+- `ckdn annotate [ref] [--format github|sarif]`: project a stored digest's
+  findings to GitHub Actions annotations (inline on the PR) or a SARIF 2.1.0
+  document (code scanning) — a pure projection that never changes run status
 
 ## [1.2.0] - 2026-07-21
 
