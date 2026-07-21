@@ -27,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is skipped rather than raised; fork-and-own registration still supported
 - Documentation site (Zensical) under `docs/` with a GitHub Pages publish
   workflow; determinism and cross-OS byte-stability now guarded by tests
-- Windows smoke CI job over the portable test subset
+- Windows added to the CI test matrix; POSIX-specific tests (real
+  `true`/`false`, `/etc` paths, symlink privilege) skip on Windows with an
+  explicit reason
 
 ### Changed
 

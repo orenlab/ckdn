@@ -4,10 +4,17 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+# The end-to-end run tests shell out to POSIX ``true``/``false``; the MCP
+# adapter itself (errors, cwd, aliases) is covered by the other tests.
+posix_run_only = pytest.mark.skipif(
+    os.name == "nt", reason="uses POSIX true/false binaries"
+)
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
@@ -44,6 +51,7 @@ def test_mcp_server_instructions_document_cwd_worktree() -> None:
     assert "lock-config" in lowered or "verify-config" in lowered
 
 
+@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_per_call_cwd_worktree_slice(tmp_path: Path) -> None:
     """Config outside project: per-call cwd anchors runs_dir and subprocess."""
@@ -72,6 +80,7 @@ async def test_mcp_per_call_cwd_worktree_slice(tmp_path: Path) -> None:
         assert not (slice_.config_dir / ".agent-runs").exists()
 
 
+@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_list_and_run_check_pass(tmp_path: Path) -> None:
     cfg_path = _write_cfg(
@@ -101,6 +110,7 @@ async def test_mcp_list_and_run_check_pass(tmp_path: Path) -> None:
         assert body["digest"]["rc"] == 0
 
 
+@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_run_check_fail_is_not_tool_error(tmp_path: Path) -> None:
     cfg_path = _write_cfg(
@@ -135,6 +145,7 @@ async def test_mcp_unknown_check_is_error(tmp_path: Path) -> None:
             )
 
 
+@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_run_group_and_evidence(tmp_path: Path) -> None:
     cfg_path = _write_cfg(

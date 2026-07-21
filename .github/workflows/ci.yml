@@ -13,11 +13,20 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # Trim the Windows leg to two Python versions to save CI minutes; the
+        # POSIX-specific tests (real true/false, /etc paths, symlink privilege)
+        # are skipped on Windows with an explicit reason.
+        exclude:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.14"
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -28,45 +37,19 @@ jobs:
       - name: Sync
         run: uv sync --extra dev --extra mcp
       - name: Ruff
+        if: runner.os == 'Linux'
         run: uv run ruff check src tests
       - name: Mypy
+        if: runner.os == 'Linux'
         run: uv run mypy src/ckdn
       - name: Ty
+        if: runner.os == 'Linux'
         run: uv run ty check src/ckdn
       - name: Verify config lock
+        if: runner.os == 'Linux'
         run: uv run ckdn verify-config --locked
       - name: Pytest
         run: uv run pytest -q
-
-  windows-smoke:
-    # Portable subset on Windows: pure logic, schema, config, parsers, plugin
-    # discovery, and CLI (packaged-schema resource loading). The exec/policy/
-    # symlink suites encode POSIX semantics (real true/false, /etc sensitive
-    # paths, symlink privilege) and are ported to Windows separately.
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
-        with:
-          enable-cache: true
-          python-version: "3.13"
-      - name: Sync
-        run: uv sync --extra dev --extra mcp
-      - name: Pytest (portable subset)
-        run: >
-          uv run pytest -q
-          tests/test_schema.py
-          tests/test_determinism.py
-          tests/test_digest.py
-          tests/test_reconcile.py
-          tests/test_parsers.py
-          tests/test_parser_plugins.py
-          tests/test_config.py
-      - name: CLI smoke
-        run: |
-          uv run ckdn --version
-          uv run ckdn schema "ckdn.digest/2"
 
   codeclone:
     runs-on: ubuntu-latest

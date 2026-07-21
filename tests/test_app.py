@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,33 @@ def _write_cfg(tmp_path: Path, body: str) -> Path:
 
 def _load_cfg(tmp_path: Path, body: str) -> Config:
     return load_config(_write_cfg(tmp_path, body), cwd=tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows has no ``true``/``false`` binaries. Stand in for ``execute`` so
+    the app-layer run tests stay portable there; POSIX runs the real commands.
+    Tests that install their own ``execute`` stub override this."""
+    if os.name != "nt":
+        return
+
+    def _fake(
+        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        rc = 1 if tokens and tokens[0] == "false" else 0
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=rc,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _fake)
 
 
 def test_list_checks_shapes(tmp_path: Path) -> None:
@@ -410,6 +438,9 @@ def test_run_alias_not_alias_and_status_fail(
     assert result.status == "fail"
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX absolute-path artifact escape (/etc/passwd)"
+)
 def test_run_one_rejects_parser_artifact_escape(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,
