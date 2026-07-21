@@ -44,6 +44,7 @@ from ckdn.config import (
 )
 from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
+from ckdn.preflight import diagnose
 from ckdn.runner import prune
 from ckdn.schema import load_schema, schema_ids
 
@@ -149,6 +150,32 @@ def cmd_verify_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Static pre-flight diagnostics: executables on PATH + parser/command fit.
+
+    Exit 1 on any error (a run that cannot work), or on any warning when
+    ``--strict``; otherwise 0.
+    """
+    cfg = _load(args)
+    diagnostics = diagnose(cfg)
+    errors = 0
+    warnings = 0
+    for d in diagnostics:
+        if d.level == "error":
+            errors += 1
+            print(f"error: [{d.check}] {d.message}", file=sys.stderr)
+        else:
+            warnings += 1
+            print(f"warning: [{d.check}] {d.message}")
+    if not diagnostics:
+        print("ok: all checks look consistent")
+        return 0
+    print(f"{errors} error(s), {warnings} warning(s)", file=sys.stderr)
+    if errors or (args.strict and warnings):
+        return 1
+    return 0
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     """Print a packaged JSON Schema by id, or list the available ids."""
     if args.id is None:
@@ -222,6 +249,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
     p_init.set_defaults(fn=cmd_init)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="pre-flight diagnostics: executables on PATH + parser/command fit",
+    )
+    add_config(p_doctor)
+    p_doctor.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit nonzero on warnings too, not just errors",
+    )
+    p_doctor.set_defaults(fn=cmd_doctor)
 
     p_schema = sub.add_parser(
         "schema",

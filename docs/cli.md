@@ -16,6 +16,7 @@ Global flags (on commands that load config): `--config PATH`, `--cwd DIR`
 | `ckdn gc [--keep N]`                     | prune old run directories                                       |
 | `ckdn init`                              | write starter `ckdn.toml`                                       |
 | `ckdn schema [id]`                       | print a packaged JSON Schema, or list schema ids                |
+| `ckdn doctor [--strict]`                 | pre-flight diagnostics (executables on PATH + parser/command fit) |
 | `ckdn verify-config [--locked]`          | validate command policy (+ optional `ckdn.lock.toml`)           |
 | `ckdn lock-config [-o path]`             | write command SHA-256 lock file for CI                          |
 

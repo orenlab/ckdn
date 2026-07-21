@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ckdn doctor`: static pre-flight diagnostics over `ckdn.toml` before any
+  subprocess — flags executables missing from `PATH` (error) and commands that
+  do not match their parser (warning: a file-based parser whose command never
+  writes its report, or a missing `--output json` / `--outputjson` / `--check`
+  flag). Exit `1` on errors (or on warnings with `--strict`), so it drops into
+  CI as a config gate
+
 ## [1.2.0] - 2026-07-21
 
 ### Added
