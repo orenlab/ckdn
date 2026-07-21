@@ -636,8 +636,22 @@ Rules: prefer `{run_dir}` artifacts; if parsing text, add a
 self-consistency guard; findings = failure evidence only; bound
 everything; return `parser_ok=False` instead of raising on bad output.
 
-Registration today: edit `_REGISTRY` in `ckdn/parsers/__init__.py`
-(fork-and-own; no entry-point plugin API yet).
+Registration, two ways:
+
+- **Entry point** (installed package) — expose the parser under the
+  `ckdn.parsers` entry-point group; ckdn discovers it at runtime. The value
+  may be a `Parser` class (instantiated with no args) or an instance.
+  Built-in names take precedence and are never shadowed, and a plugin that
+  fails to import is skipped rather than breaking ckdn.
+
+  ```toml
+  # pyproject.toml of your parser package
+  [project.entry-points."ckdn.parsers"]
+  mytool = "my_pkg:MyToolParser"
+  ```
+
+- **Fork-and-own** — add the instance to `_REGISTRY` in
+  `ckdn/parsers/__init__.py`.
 
 ## Design principles
 
@@ -655,7 +669,6 @@ Registration today: edit `_REGISTRY` in `ckdn/parsers/__init__.py`
   cover lint/types groups; full-suite sequencing stays with the caller)
 - Watch mode, TUI, HTML dashboards
 - Windows symlink handling beyond the `LATEST` marker fallback
-- Pluggable parser entry points
 
 ## Development
 
