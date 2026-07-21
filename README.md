@@ -136,7 +136,11 @@ Invariants (enforced by `ckdn.reconcile`, covered by contract tests):
 **Exit-code contract.** `ckdn run` exits with the original command’s code
 (clamped 1–255), so it drops into any hook or CI slot where the raw
 command used to be. One extra rule: `rc == 0` with a non-green status
-exits `1`.
+exits `1`. When ckdn owns the failure it uses conventional synthetic
+codes — `124` timeout, `126` blocked by command policy, `127` command not
+found — each also reconciling to a non-green status with evidence. For an
+alias, the exit code is the aggregate `rc` (see
+[Aliases and aggregates](#aliases-and-aggregates-ckdnaggregate1)).
 
 ## Digests (`ckdn.digest/2`)
 
