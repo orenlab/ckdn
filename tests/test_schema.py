@@ -11,7 +11,6 @@ structural drift (renamed/added/removed key) fails this test loudly.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -111,8 +110,8 @@ def test_aggregate_variants_validate() -> None:
     all_pass = build_alias_aggregate(
         alias="style",
         results=[
-            ("format", "pass", 0, Path(".agent-runs/x-format")),
-            ("ruff", "pass", 0, Path(".agent-runs/x-ruff")),
+            ("format", "pass", 0, ".agent-runs/x-format"),
+            ("ruff", "pass", 0, ".agent-runs/x-ruff"),
         ],
         status="pass",
         rc=0,
@@ -120,8 +119,8 @@ def test_aggregate_variants_validate() -> None:
     mixed = build_alias_aggregate(
         alias="lint",
         results=[
-            ("ruff", "pass", 0, Path(".agent-runs/x-ruff")),
-            ("pylint", "fail", 1, Path(".agent-runs/x-pylint")),
+            ("ruff", "pass", 0, ".agent-runs/x-ruff"),
+            ("pylint", "fail", 1, ".agent-runs/x-pylint"),
         ],
         status="fail",
         rc=1,

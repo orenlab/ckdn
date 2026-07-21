@@ -179,7 +179,9 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
     status = "pass" if exit_code == 0 else "fail"
     aggregate = build_alias_aggregate(
         alias=alias.name,
-        results=[(r.check, r.status, r.rc, r.run_dir) for r in results],
+        # r.digest["run_dir"] is the member's own relative, posix run dir, so
+        # the aggregate and the member digest report identical paths.
+        results=[(r.check, r.status, r.rc, r.digest["run_dir"]) for r in results],
         status=status,
         rc=exit_code,
     )

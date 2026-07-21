@@ -183,8 +183,8 @@ def test_alias_aggregate_sparse() -> None:
     agg = build_alias_aggregate(
         alias="lint",
         results=[
-            ("ruff", "pass", 0, Path("runs/ruff")),
-            ("pylint", "fail", 1, Path("runs/pylint")),
+            ("ruff", "pass", 0, "runs/ruff"),
+            ("pylint", "fail", 1, "runs/pylint"),
         ],
         status="fail",
         rc=1,

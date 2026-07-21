@@ -10,8 +10,6 @@ and no timestamp/duration/hash leaks into the digest (those belong to
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from digest_factory import make_finding, make_outcome
 
 from ckdn.digest import build_alias_aggregate, build_digest, build_meta, dump_json
@@ -70,8 +68,8 @@ def test_aggregate_is_byte_identical_across_calls() -> None:
         return build_alias_aggregate(
             alias="lint",
             results=[
-                ("ruff", "pass", 0, Path(".agent-runs/x-ruff")),
-                ("pylint", "fail", 1, Path(".agent-runs/x-pylint")),
+                ("ruff", "pass", 0, ".agent-runs/x-ruff"),
+                ("pylint", "fail", 1, ".agent-runs/x-pylint"),
             ],
             status="fail",
             rc=1,

@@ -27,7 +27,13 @@ from ckdn.app import (
 )
 from ckdn.config import Config, load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
-from ckdn.runner import LOG_NAME, create_run_dir, resolve_run_dir, update_latest
+from ckdn.runner import (
+    LOG_NAME,
+    RunOutcome,
+    create_run_dir,
+    resolve_run_dir,
+    update_latest,
+)
 
 
 def _write_cfg(tmp_path: Path, body: str) -> Path:
@@ -77,6 +83,36 @@ def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
     run_dir = result.digest["run_dir"]
     assert "\\" not in run_dir
     assert run_dir.startswith(".agent-runs/")
+
+
+def test_aggregate_run_dir_matches_member_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The aggregate reports each member's own (relative, posix) digest run_dir.
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.a]\ncommand = "x"\nparser = "generic"\n[check.g]\nmembers = ["a"]\n',
+    )
+
+    def _exec(
+        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=1,  # fail so the aggregate carries the member's run_dir
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    result = run_alias(cfg, cfg.checks["g"])
+    agg_member = result.aggregate["members"][0]
+    assert agg_member["run_dir"] == result.members[0].digest["run_dir"]
 
 
 def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
@@ -359,7 +395,12 @@ def test_run_alias_not_alias_and_status_fail(
             status="parse_mismatch",
             rc=0,
             run_dir=run_dir,
-            digest={"check": check.name, "status": "parse_mismatch", "rc": 0},
+            digest={
+                "check": check.name,
+                "status": "parse_mismatch",
+                "rc": 0,
+                "run_dir": run_dir.name,
+            },
             exit_code=1,
         )
 

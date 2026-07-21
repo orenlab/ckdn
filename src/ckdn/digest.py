@@ -129,14 +129,15 @@ def build_digest(
 def build_alias_aggregate(
     *,
     alias: str,
-    results: list[tuple[str, str, int, Path]],
+    results: list[tuple[str, str, int, str]],
     status: str,
     rc: int,
 ) -> dict[str, Any]:
     """Sparse aggregate for alias stdout (members already have digests on disk).
 
     ``rc`` mirrors the process exit code (the pass-through of the first
-    non-green member), so the stdout document is self-contained.
+    non-green member), so the stdout document is self-contained. Each member's
+    ``run_dir`` is the same relative, posix path its own digest reports.
     """
     members: list[dict[str, Any]] = []
     for check, member_status, member_rc, run_dir in results:
@@ -146,8 +147,7 @@ def build_alias_aggregate(
             "rc": member_rc,
         }
         if member_status != "pass":
-            # as_posix so aggregate paths match digest paths across OSes.
-            row["run_dir"] = run_dir.as_posix()
+            row["run_dir"] = run_dir
         members.append(row)
     return {
         "schema": AGGREGATE_SCHEMA,
