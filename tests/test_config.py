@@ -17,6 +17,31 @@ def _write(tmp: Path, body: str) -> Path:
     return path
 
 
+def test_check_env_parsed(tmp_path: Path) -> None:
+    cfg = load_config(
+        _write(
+            tmp_path,
+            '[check.a]\ncommand = "true"\nparser = "generic"\n'
+            'env = { FOO = "bar", OUT = "{run_dir}/x" }\n',
+        ),
+        cwd=tmp_path,
+    )
+    assert cfg.checks["a"].env == {"FOO": "bar", "OUT": "{run_dir}/x"}
+    # env is not leaked into the parser options bag
+    assert "env" not in cfg.checks["a"].options
+
+
+def test_check_env_must_be_string_values(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="env"):
+        load_config(
+            _write(
+                tmp_path,
+                '[check.a]\ncommand = "true"\nparser = "generic"\nenv = { N = 1 }\n',
+            ),
+            cwd=tmp_path,
+        )
+
+
 def test_atomic_check_loads(tmp_path: Path) -> None:
     cfg = load_config(
         _write(

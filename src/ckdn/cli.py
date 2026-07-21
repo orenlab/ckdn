@@ -107,14 +107,22 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     cfg = _load(args)
-    for row in list_runs(cfg, limit=args.n):
+    rows = list_runs(cfg, limit=args.n)
+    if args.json:
+        print(dump_json({"runs": rows}), end="")
+        return 0
+    for row in rows:
         print(f"{row['run_id']}\t{row['check']}\t{row['status']}")
     return 0
 
 
 def cmd_checks(args: argparse.Namespace) -> int:
     cfg = _load(args)
-    for item in list_checks(cfg):
+    items = list_checks(cfg)
+    if args.json:
+        print(dump_json({"checks": items}), end="")
+        return 0
+    for item in items:
         if item["kind"] == "alias":
             members = ",".join(item["members"])
             print(f"{item['name']}\talias={members}\tfail_fast={item['fail_fast']}")
@@ -234,11 +242,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_show.set_defaults(fn=cmd_show)
 
     p_list = sub.add_parser("list", help="list recent runs")
+    p_list.add_argument(
+        "--json", action="store_true", help='emit {"runs": [...]} as JSON'
+    )
     add_config(p_list)
     p_list.add_argument("-n", type=int, default=10)
     p_list.set_defaults(fn=cmd_list)
 
     p_checks = sub.add_parser("checks", help="list configured checks")
+    p_checks.add_argument(
+        "--json", action="store_true", help='emit {"checks": [...]} as JSON'
+    )
     add_config(p_checks)
     p_checks.set_defaults(fn=cmd_checks)
 

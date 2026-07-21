@@ -95,7 +95,17 @@ def run_one(
             include_log_tail=True,
         )
     else:
-        outcome = execute(tokens, cwd=cfg.cwd, run_dir=run_dir, timeout=check.timeout)
+        run_env = {
+            key: value.replace("{run_dir}", str(run_dir))
+            for key, value in check.env.items()
+        } or None
+        outcome = execute(
+            tokens,
+            cwd=cfg.cwd,
+            run_dir=run_dir,
+            timeout=check.timeout,
+            env=run_env,
+        )
 
     if not policy_blocked:
         try:

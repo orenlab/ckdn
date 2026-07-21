@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes its report, or a missing `--output json` / `--outputjson` / `--check`
   flag). Exit `1` on errors (or on warnings with `--strict`), so it drops into
   CI as a config gate
+- `--json` on `ckdn list` and `ckdn checks`: machine-readable
+  `{"runs": [...]}` / `{"checks": [...]}` (the same shape the MCP `list_runs`
+  / `list_checks` tools return)
+- Per-check `env` table: overlays the subprocess environment for one check
+  (inherited `PATH` etc. preserved), with `{run_dir}` substitution in values;
+  never recorded in `meta.json`
 
 ## [1.2.0] - 2026-07-21
 

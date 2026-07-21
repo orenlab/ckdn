@@ -51,6 +51,18 @@ seconds (a timeout yields `rc=124` and a non-green status). Any other key is
 passed to the parser as an option (`fail_under`, `score_fail_under`,
 `fail_levels`, …).
 
+Optional **`env`** (a table of string values) is overlaid on the subprocess
+environment for that check only — the inherited environment (`PATH`, …) is
+preserved. `{run_dir}` is substituted in env values, so a tool can be pointed
+at the run directory. `env` is never written to `meta.json`.
+
+```toml
+[check.coverage]
+command = "pytest --cov=src --cov-report=xml:{run_dir}/coverage.xml"
+parser = "coverage"
+env = { COVERAGE_FILE = "{run_dir}/.coverage", PYTHONWARNINGS = "error" }
+```
+
 **Alias**: `members = ["atomic", …]` only (optional `fail_fast`). No nesting.
 See [Aliases & aggregates](aliases.md).
 

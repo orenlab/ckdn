@@ -59,7 +59,11 @@ def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
         return
 
     def _fake(
-        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         rc = 1 if tokens and tokens[0] == "false" else 0
@@ -113,6 +117,44 @@ def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
     assert run_dir.startswith(".agent-runs/")
 
 
+def test_check_env_passed_with_run_dir_substituted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        'env = { K = "v", OUT = "{run_dir}/cov.xml" }\n',
+    )
+    captured: dict[str, dict[str, str] | None] = {}
+
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        captured["env"] = env
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=0,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    run_one(cfg, cfg.checks["ok"], extra=[])
+    env = captured["env"]
+    assert env is not None
+    assert env["K"] == "v"
+    assert env["OUT"].endswith("/cov.xml") and "{run_dir}" not in env["OUT"]
+
+
 def test_aggregate_run_dir_matches_member_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -123,7 +165,11 @@ def test_aggregate_run_dir_matches_member_digest(
     )
 
     def _exec(
-        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         return RunOutcome(
@@ -461,7 +507,7 @@ def test_run_one_run_dir_outside_root(
     outside = tmp_path.parent / f"{tmp_path.name}-outside-run"
     outside.mkdir()
 
-    def _execute(tokens, cwd, run_dir, timeout):  # type: ignore[no-untyped-def]
+    def _execute(tokens, cwd, run_dir, timeout, env=None):  # type: ignore[no-untyped-def]
         return RunOutcome(
             run_dir=run_dir,
             tokens=tokens,
