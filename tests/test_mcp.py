@@ -4,17 +4,10 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-# The end-to-end run tests shell out to POSIX ``true``/``false``; the MCP
-# adapter itself (errors, cwd, aliases) is covered by the other tests.
-posix_run_only = pytest.mark.skipif(
-    os.name == "nt", reason="uses POSIX true/false binaries"
-)
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
@@ -22,6 +15,7 @@ from worktree_fixtures import make_worktree_slice  # noqa: E402
 
 from ckdn.mcp.guidance import MCP_SERVER_INSTRUCTIONS  # noqa: E402
 from ckdn.mcp.server import create_server  # noqa: E402
+from ckdn.runner import LOG_NAME, RunOutcome  # noqa: E402
 
 
 def _write_cfg(tmp_path: Path, body: str) -> Path:
@@ -41,6 +35,35 @@ def _data(result: object) -> Any:
     return getattr(result, "structured_content", None)
 
 
+@pytest.fixture(autouse=True)
+def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the MCP transport tests from real subprocess execution so they
+    run on every OS (Windows has no ``true``/``false``). ``true`` -> rc 0,
+    ``false`` -> rc 1; an empty ``full.log`` is written for get_evidence."""
+
+    def _fake(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        rc = 1 if tokens and tokens[0] == "false" else 0
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=rc,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _fake)
+
+
 def test_mcp_server_instructions_document_cwd_worktree() -> None:
     mcp = create_server()
     instructions = getattr(mcp, "instructions", None) or MCP_SERVER_INSTRUCTIONS
@@ -51,7 +74,6 @@ def test_mcp_server_instructions_document_cwd_worktree() -> None:
     assert "lock-config" in lowered or "verify-config" in lowered
 
 
-@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_per_call_cwd_worktree_slice(tmp_path: Path) -> None:
     """Config outside project: per-call cwd anchors runs_dir and subprocess."""
@@ -80,7 +102,6 @@ async def test_mcp_per_call_cwd_worktree_slice(tmp_path: Path) -> None:
         assert not (slice_.config_dir / ".agent-runs").exists()
 
 
-@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_list_and_run_check_pass(tmp_path: Path) -> None:
     cfg_path = _write_cfg(
@@ -110,7 +131,6 @@ async def test_mcp_list_and_run_check_pass(tmp_path: Path) -> None:
         assert body["digest"]["rc"] == 0
 
 
-@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_run_check_fail_is_not_tool_error(tmp_path: Path) -> None:
     cfg_path = _write_cfg(
@@ -145,7 +165,6 @@ async def test_mcp_unknown_check_is_error(tmp_path: Path) -> None:
             )
 
 
-@posix_run_only
 @pytest.mark.asyncio
 async def test_mcp_run_group_and_evidence(tmp_path: Path) -> None:
     cfg_path = _write_cfg(

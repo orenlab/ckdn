@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -20,12 +19,6 @@ from ckdn.config_lock import command_digest, verify_config, write_config_lock
 from ckdn.parsers.base import ParseContext, artifact_path
 from ckdn.parsers.pytest_junit import PytestJUnitParser
 from ckdn.runner import RC_POLICY, build_tokens
-
-# These assert POSIX absolute/sensitive-path denial (/etc/passwd); on Windows
-# such paths are not absolute, so containment behaves differently.
-posix_paths_only = pytest.mark.skipif(
-    os.name == "nt", reason="POSIX absolute/sensitive path semantics"
-)
 
 
 def _cfg(tmp_path: Path, body: str, *, policy: str = "workspace") -> Path:
@@ -55,7 +48,6 @@ def test_workspace_allows_starter_style_commands(tmp_path: Path) -> None:
     )
 
 
-@posix_paths_only
 def test_workspace_blocks_absolute_outside_cwd(tmp_path: Path) -> None:
     cwd = tmp_path / "proj"
     cwd.mkdir()
@@ -82,7 +74,6 @@ def test_workspace_blocks_parent_traversal(tmp_path: Path) -> None:
         )
 
 
-@posix_paths_only
 def test_workspace_blocks_extra_args_escape(tmp_path: Path) -> None:
     cwd = tmp_path / "proj"
     cwd.mkdir()
@@ -231,7 +222,6 @@ def test_worktree_slice_command_and_artifact_paths(tmp_path: Path) -> None:
     assert cfg.runs_dir == slice_.worktree / ".agent-runs"
 
 
-@posix_paths_only
 def test_run_one_policy_violation_no_subprocess(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

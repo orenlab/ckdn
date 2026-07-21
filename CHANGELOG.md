@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reflect the gate for CI. Baseline never changes execution truth and never
   accepts an untrusted failure (`error`/`parse_mismatch`/crash → `unavailable`)
 
+### Changed
+
+- Full Windows: the test suite now runs end-to-end on Windows. The command
+  and artifact path-escape checks already fire cross-platform (pathlib anchors
+  a rooted `/etc/...` path to the drive root, outside the workspace), so those
+  tests no longer skip; the app/MCP tests isolate `execute` on every OS (real
+  subprocess execution stays covered by `test_runner` via `sys.executable`).
+  Only the real-symlink test remains POSIX-only (Windows symlinks need
+  privilege; the `LATEST` marker fallback is covered separately)
+
 ## [1.2.0] - 2026-07-21
 
 ### Added

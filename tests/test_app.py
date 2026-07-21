@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -53,11 +52,10 @@ def _load_cfg(tmp_path: Path, body: str) -> Config:
 
 @pytest.fixture(autouse=True)
 def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Windows has no ``true``/``false`` binaries. Stand in for ``execute`` so
-    the app-layer run tests stay portable there; POSIX runs the real commands.
+    """Stand in for ``execute`` so the app-layer run tests are OS-independent
+    (Windows has no ``true``/``false``; real subprocess execution is covered by
+    test_runner via ``sys.executable``). ``true`` -> rc 0, ``false`` -> rc 1.
     Tests that install their own ``execute`` stub override this."""
-    if os.name != "nt":
-        return
 
     def _fake(
         tokens: list[str],
@@ -560,9 +558,6 @@ def test_run_alias_not_alias_and_status_fail(
     assert result.status == "fail"
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="POSIX absolute-path artifact escape (/etc/passwd)"
-)
 def test_run_one_rejects_parser_artifact_escape(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,
