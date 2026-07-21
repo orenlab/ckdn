@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/orenlab/ckdn/blob/main/src/ckdn/schemas/ckdn.meta.v1.schema.json",
+  "title": "ckdn.meta/1",
+  "description": "Provenance for one run: when, how long, exact argv, log hash, ckdn version. Everything nondeterministic lives here, kept out of ckdn.digest/2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "ckdn_version",
+    "check",
+    "parser",
+    "command",
+    "rc",
+    "timed_out",
+    "started_at",
+    "duration_s",
+    "log_sha256",
+    "log_bytes"
+  ],
+  "properties": {
+    "schema": {"const": "ckdn.meta/1"},
+    "ckdn_version": {"type": "string", "minLength": 1},
+    "check": {"type": "string", "minLength": 1},
+    "parser": {"type": "string", "minLength": 1},
+    "command": {"type": "array", "items": {"type": "string"}},
+    "rc": {"type": "integer"},
+    "timed_out": {"type": "boolean"},
+    "started_at": {"type": "string", "minLength": 1},
+    "duration_s": {"type": "number", "minimum": 0},
+    "log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "log_bytes": {"type": "integer", "minimum": 0}
+  }
+}

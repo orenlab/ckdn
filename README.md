@@ -207,6 +207,15 @@ On `error` / `parse_mismatch` the digest additionally carries a bounded
 `meta.json`). Digests carry **facts only**; policy belongs in a skill or
 `CLAUDE.md`, not in the data file.
 
+**Schema.** Every document ckdn writes declares a `schema` id, and each id
+has a formal JSON Schema (Draft 2020-12) shipped inside the wheel under
+`ckdn/schemas/` — `ckdn.digest/2`, `ckdn.aggregate/1`, `ckdn.meta/1`.
+Downstream consumers can validate ckdn output against them; ckdn's own test
+suite builds every status variant and validates it against these schemas, so
+a structural drift fails CI. Print one with `ckdn schema ckdn.digest/2`
+(or `ckdn schema` to list ids), or load it in Python via
+`ckdn.schema.load_schema("ckdn.digest/2")`.
+
 ## Aliases and aggregates (`ckdn.aggregate/1`)
 
 An alias groups atomic checks: `ckdn run lint` runs each member in config
@@ -367,6 +376,7 @@ Global flags (on commands that load config): `--config PATH`, `--cwd DIR`
 | `ckdn checks`                            | configured checks (atomics + aliases)                           |
 | `ckdn gc [--keep N]`                     | prune old run directories                                       |
 | `ckdn init`                              | write starter `ckdn.toml`                                       |
+| `ckdn schema [id]`                       | print a packaged JSON Schema, or list schema ids                |
 | `ckdn verify-config [--locked]`          | validate command policy (+ optional `ckdn.lock.toml`)           |
 | `ckdn lock-config [-o path]`             | write command SHA-256 lock file for CI                          |
 

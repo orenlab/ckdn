@@ -45,6 +45,7 @@ from ckdn.config import (
 from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
 from ckdn.runner import prune
+from ckdn.schema import load_schema, schema_ids
 
 
 def _fail(message: str) -> int:
@@ -148,6 +149,20 @@ def cmd_verify_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_schema(args: argparse.Namespace) -> int:
+    """Print a packaged JSON Schema by id, or list the available ids."""
+    if args.id is None:
+        for schema_id in schema_ids():
+            print(schema_id)
+        return 0
+    try:
+        schema = load_schema(args.id)
+    except ValueError as exc:
+        return _fail(str(exc))
+    print(dump_json_pretty(schema), end="")
+    return 0
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     target = Path.cwd() / CONFIG_NAME
     if target.exists():
@@ -207,6 +222,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
     p_init.set_defaults(fn=cmd_init)
+
+    p_schema = sub.add_parser(
+        "schema",
+        help="print a packaged JSON Schema by id, or list ids",
+    )
+    p_schema.add_argument(
+        "id", nargs="?", help="schema id, e.g. ckdn.digest/2 (omit to list ids)"
+    )
+    p_schema.set_defaults(fn=cmd_schema)
 
     p_lock = sub.add_parser(
         "lock-config",
