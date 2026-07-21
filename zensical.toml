@@ -18,6 +18,7 @@ nav = [
     { "Status model" = "status-model.md" },
     { "Digests & schemas" = "digests.md" },
     { "Aliases & aggregates" = "aliases.md" },
+    { "Baselines" = "baselines.md" },
   ] },
   { "Reference" = [
     { "Configuration" = "configuration.md" },

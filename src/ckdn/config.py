@@ -199,6 +199,7 @@ class RunSettings:
     log_tail_lines: int = 40
     command_policy: CommandPolicy = "workspace"
     command_allowlist: tuple[str, ...] | None = None
+    baseline: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -237,6 +238,14 @@ class Config:
     def runs_dir(self) -> Path:
         d = self.run.runs_dir
         return d if d.is_absolute() else self.cwd / d
+
+    @property
+    def baseline_path(self) -> Path | None:
+        """Resolved baseline file path, or ``None`` when not configured."""
+        b = self.run.baseline
+        if b is None:
+            return None
+        return b if b.is_absolute() else self.cwd / b
 
 
 _ATOMIC_RESERVED = frozenset({"command", "parser", "timeout", "env"})
@@ -409,6 +418,7 @@ def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
         log_tail_lines=int(run_raw.get("log_tail_lines", 40)),
         command_policy=_parse_command_policy(run_raw),
         command_allowlist=_parse_command_allowlist(run_raw),
+        baseline=(Path(str(run_raw["baseline"])) if run_raw.get("baseline") else None),
     )
 
     checks_raw = data.get("check", {})

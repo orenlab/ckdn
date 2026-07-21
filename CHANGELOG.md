@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ckdn annotate [ref] [--format github|sarif]`: project a stored digest's
   findings to GitHub Actions annotations (inline on the PR) or a SARIF 2.1.0
   document (code scanning) — a pure projection that never changes run status
+- **Finding baselines** — gate CI on *new* findings without fixing the whole
+  backlog. `[run].baseline` + `ckdn baseline <check>` record accepted findings
+  (line/column-drift-tolerant fingerprints); the digest gains `baseline`
+  (`known`/`new`) and a `gate` (`pass`/`fail`/`unavailable`) reported
+  **separately** from execution status. `ckdn run --gate` makes the exit
+  reflect the gate for CI. Baseline never changes execution truth and never
+  accepts an untrusted failure (`error`/`parse_mismatch`/crash → `unavailable`)
 
 ## [1.2.0] - 2026-07-21
 

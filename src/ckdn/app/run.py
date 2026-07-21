@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
+from ckdn import baseline
 from ckdn.app.errors import (
     AliasExtraArgsError,
     NotAliasError,
@@ -44,6 +46,46 @@ def exit_from_outcome(rc: int, status: str) -> int:
     if rc != 0:
         return rc if 0 < rc <= 255 else 1
     return 0 if status == "pass" else 1
+
+
+def _annotate_baseline(
+    cfg: Config,
+    check_name: str,
+    execution_status: str,
+    result: ParseResult,
+    digest: dict[str, Any],
+) -> None:
+    """Classify findings against the baseline and attach ``baseline``/``gate``.
+
+    Execution truth (``digest['status']``) is never touched — see
+    :mod:`ckdn.baseline`. Only runs when ``[run].baseline`` is configured.
+    """
+    baseline_path = cfg.baseline_path
+    if baseline_path is None:
+        return
+    accepted = baseline.load(baseline_path).get(check_name, set())
+    new = 0
+    known = 0
+    for finding in result.findings:
+        if baseline.fingerprint(check_name, finding.to_dict()) in accepted:
+            known += 1
+        else:
+            new += 1
+    for shown in digest.get("findings", []):
+        if baseline.fingerprint(check_name, shown) in accepted:
+            shown["baselined"] = True
+    if known or new:
+        digest["baseline"] = {"known": known, "new": new}
+    digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
+
+
+def _attach_aggregate_gate(
+    aggregate: dict[str, Any], results: list[AtomicRunResult]
+) -> None:
+    """Combine member gates into an aggregate gate (unavailable > fail > pass)."""
+    combined = baseline.combine_gate([r.digest for r in results])
+    if combined is not None:
+        aggregate["gate"] = combined
 
 
 def run_one(
@@ -149,6 +191,7 @@ def run_one(
         tail_lines=cfg.run.log_tail_lines,
         artifacts=list_artifacts(run_dir),
     )
+    _annotate_baseline(cfg, check.name, status, result, digest)
     write_documents(run_dir, digest, meta)
     update_latest(cfg.runs_dir, run_dir)
     prune(cfg.runs_dir, cfg.run.keep)
@@ -195,6 +238,7 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
         status=status,
         rc=exit_code,
     )
+    _attach_aggregate_gate(aggregate, results)
     return AliasRunResult(
         alias=alias.name,
         status=status,
@@ -228,6 +272,7 @@ def run_all(cfg: Config, *, fail_fast: bool = False) -> AliasRunResult:
         status=status,
         rc=exit_code,
     )
+    _attach_aggregate_gate(aggregate, results)
     return AliasRunResult(
         alias="*",
         status=status,
