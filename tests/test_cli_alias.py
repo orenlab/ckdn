@@ -19,7 +19,7 @@ from ckdn.runner import RunOutcome
 def _cfg(tmp: Path, body: str) -> Path:
     path = tmp / "ckdn.toml"
     path.write_text(
-        f'[run]\nruns_dir = "{tmp / "runs"}"\n\n{body}',
+        f'[run]\nruns_dir = "{(tmp / "runs").as_posix()}"\n\n{body}',
         encoding="utf-8",
     )
     return path

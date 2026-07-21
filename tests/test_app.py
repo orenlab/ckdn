@@ -481,6 +481,6 @@ def test_run_one_run_dir_outside_root(
     monkeypatch.setattr(app_run, "update_latest", lambda *a, **k: None)
     monkeypatch.setattr(app_run, "prune", lambda *a, **k: None)
     result = run_one(cfg, cfg.checks["ok"], extra=[])
-    assert result.digest["run_dir"] == str(outside)
+    assert result.digest["run_dir"] == outside.as_posix()
     # Absolute path proves relative_to(cfg.root) fell back.
-    assert result.digest["run_dir"].startswith(str(tmp_path.parent))
+    assert result.digest["run_dir"].startswith(tmp_path.parent.as_posix())

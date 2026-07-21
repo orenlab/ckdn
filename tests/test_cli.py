@@ -23,7 +23,7 @@ from ckdn.runner import RunOutcome, create_run_dir, update_latest
 def _cfg(tmp: Path, body: str) -> Path:
     path = tmp / CONFIG_NAME
     path.write_text(
-        f'[run]\nruns_dir = "{tmp / "runs"}"\nkeep = 20\n\n{body}',
+        f'[run]\nruns_dir = "{(tmp / "runs").as_posix()}"\nkeep = 20\n\n{body}',
         encoding="utf-8",
     )
     return path
