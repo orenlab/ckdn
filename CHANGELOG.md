@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-21
+
+### Added
+
+- JSON Schema documents (Draft 2020-12) for `ckdn.digest/2`,
+  `ckdn.aggregate/1`, and `ckdn.meta/1`, shipped in the wheel under
+  `ckdn/schemas/`; loadable via `ckdn.schema.load_schema()` (stdlib-only). The
+  test suite validates every emitted document shape against these schemas, so
+  a structural drift fails CI
+- `ckdn schema [id]` command: print a packaged JSON Schema or list schema ids,
+  so downstream can wire ckdn's contract into their own validation
+- Parser plugin discovery via the `ckdn.parsers` entry-point group: built-in
+  names take precedence and are never shadowed, and a broken/colliding plugin
+  is skipped rather than raised; fork-and-own registration still supported
+- Documentation site (Zensical) under `docs/` with a GitHub Pages publish
+  workflow; determinism and cross-OS byte-stability now guarded by tests
+- Windows added to the CI test matrix; POSIX-specific tests (real
+  `true`/`false`, `/etc` paths, symlink privilege) skip on Windows with an
+  explicit reason
+
+### Changed
+
+- Digest and aggregate `run_dir` are normalized to forward slashes
+  (`Path.as_posix()`) so a digest is byte-identical across operating systems
+- Alias aggregate members report the same relative `run_dir` as the member's
+  own digest (previously an absolute path)
+- Exit-code contract documents the synthetic codes `124` (timeout), `126`
+  (blocked by command policy), and `127` (command not found)
+- README trimmed to a concise overview; full reference moved to the docs site
+
 ## [1.1.1] - 2026-07-13
 
 ### Added
@@ -77,7 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/orenlab/ckdn/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/orenlab/ckdn/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/orenlab/ckdn/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/orenlab/ckdn/releases/tag/v1.0.0

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,13 @@ from ckdn.app import (
 )
 from ckdn.config import Config, load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
-from ckdn.runner import LOG_NAME, create_run_dir, resolve_run_dir, update_latest
+from ckdn.runner import (
+    LOG_NAME,
+    RunOutcome,
+    create_run_dir,
+    resolve_run_dir,
+    update_latest,
+)
 
 
 def _write_cfg(tmp_path: Path, body: str) -> Path:
@@ -41,6 +48,33 @@ def _write_cfg(tmp_path: Path, body: str) -> Path:
 
 def _load_cfg(tmp_path: Path, body: str) -> Config:
     return load_config(_write_cfg(tmp_path, body), cwd=tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows has no ``true``/``false`` binaries. Stand in for ``execute`` so
+    the app-layer run tests stay portable there; POSIX runs the real commands.
+    Tests that install their own ``execute`` stub override this."""
+    if os.name != "nt":
+        return
+
+    def _fake(
+        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        rc = 1 if tokens and tokens[0] == "false" else 0
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=rc,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _fake)
 
 
 def test_list_checks_shapes(tmp_path: Path) -> None:
@@ -67,6 +101,46 @@ def test_run_one_and_digest_roundtrip(tmp_path: Path) -> None:
     loaded = get_digest(cfg)
     assert loaded["check"] == "ok"
     assert loaded["status"] == "pass"
+
+
+def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
+    # Digest paths are normalized to forward slashes so a digest is byte-stable
+    # across OSes (no-op on POSIX; normalizes backslashes on Windows).
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+    run_dir = result.digest["run_dir"]
+    assert "\\" not in run_dir
+    assert run_dir.startswith(".agent-runs/")
+
+
+def test_aggregate_run_dir_matches_member_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The aggregate reports each member's own (relative, posix) digest run_dir.
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.a]\ncommand = "x"\nparser = "generic"\n[check.g]\nmembers = ["a"]\n',
+    )
+
+    def _exec(
+        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=1,  # fail so the aggregate carries the member's run_dir
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    result = run_alias(cfg, cfg.checks["g"])
+    agg_member = result.aggregate["members"][0]
+    assert agg_member["run_dir"] == result.members[0].digest["run_dir"]
 
 
 def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
@@ -349,7 +423,12 @@ def test_run_alias_not_alias_and_status_fail(
             status="parse_mismatch",
             rc=0,
             run_dir=run_dir,
-            digest={"check": check.name, "status": "parse_mismatch", "rc": 0},
+            digest={
+                "check": check.name,
+                "status": "parse_mismatch",
+                "rc": 0,
+                "run_dir": run_dir.name,
+            },
             exit_code=1,
         )
 
@@ -359,6 +438,9 @@ def test_run_alias_not_alias_and_status_fail(
     assert result.status == "fail"
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX absolute-path artifact escape (/etc/passwd)"
+)
 def test_run_one_rejects_parser_artifact_escape(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,
@@ -399,6 +481,6 @@ def test_run_one_run_dir_outside_root(
     monkeypatch.setattr(app_run, "update_latest", lambda *a, **k: None)
     monkeypatch.setattr(app_run, "prune", lambda *a, **k: None)
     result = run_one(cfg, cfg.checks["ok"], extra=[])
-    assert result.digest["run_dir"] == str(outside)
+    assert result.digest["run_dir"] == outside.as_posix()
     # Absolute path proves relative_to(cfg.root) fell back.
-    assert result.digest["run_dir"].startswith(str(tmp_path.parent))
+    assert result.digest["run_dir"].startswith(tmp_path.parent.as_posix())

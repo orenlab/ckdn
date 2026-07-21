@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/orenlab/ckdn/blob/main/src/ckdn/schemas/ckdn.digest.v2.schema.json",
+  "title": "ckdn.digest/2",
+  "description": "Deterministic, sparse digest for one atomic check. Absent optional keys mean empty / 0 / false. Facts only; no policy, no timestamps (those live in ckdn.meta/1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "check", "status", "rc", "run_dir"],
+  "properties": {
+    "schema": {"const": "ckdn.digest/2"},
+    "check": {"type": "string", "minLength": 1},
+    "status": {"enum": ["pass", "fail", "error", "parse_mismatch"]},
+    "rc": {"type": "integer"},
+    "run_dir": {"type": "string", "minLength": 1},
+    "status_reason": {"type": "string"},
+    "timed_out": {"const": true},
+    "summary": {"type": "object"},
+    "gate_failures": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "notes": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "findings_total": {"type": "integer", "minimum": 1},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}, "minItems": 1},
+    "findings_truncated": {"type": "integer", "minimum": 1},
+    "artifacts": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "log_tail": {"type": "array", "items": {"type": "string"}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "pass"}}},
+      "then": {"not": {"required": ["status_reason"]}},
+      "else": {"required": ["status_reason"]}
+    }
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "message"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "message": {"type": "string"},
+        "location": {"type": "string"},
+        "detail": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    }
+  }
+}

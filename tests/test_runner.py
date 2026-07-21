@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -101,6 +102,11 @@ def test_execute_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert "failed to start" in outcome.exec_note
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="symlink creation needs privilege on Windows; the "
+    "marker fallback is covered by test_update_latest_fallback_marker",
+)
 def test_update_latest_symlink_and_resolve(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     run_dir = create_run_dir(runs, "a")

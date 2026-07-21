@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 [project]
 name = "ckdn"
-version = "1.1.1"
+version = "1.2.0"
 description = "ckdn (checkdown): deterministic check runner and log digester for AI-assisted development loops"
 readme = "README.md"
 license = "MIT"
@@ -61,6 +61,7 @@ dev = [
     "ty>=0.0.58",
     "codeclone[mcp]==2.1.0a1",
     "pre-commit>=4.6.0",
+    "jsonschema>=4.20",
 ]
 
 [build-system]
@@ -109,6 +110,12 @@ exclude = [
     "^site/",
     "^plugins/cursor-codeclone/scripts/launch_mcp\\.py$",
 ]
+
+# jsonschema is a dev/test-only dependency (the core CLI stays stdlib-only)
+# and ships no type stubs; the self-validation test uses it directly.
+[[tool.mypy.overrides]]
+module = ["jsonschema.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 88

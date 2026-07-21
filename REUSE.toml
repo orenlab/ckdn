@@ -13,3 +13,14 @@ path = [
 SPDX-FileCopyrightText = "Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>"
 SPDX-License-Identifier = "MIT"
 precedence = "aggregate"
+
+# Docs pages carry YAML front matter (no room for an SPDX comment) and the
+# packaged JSON Schemas are comment-free JSON.
+[[annotations]]
+path = [
+  "docs/**",
+  "src/ckdn/schemas/*.json",
+]
+SPDX-FileCopyrightText = "Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>"
+SPDX-License-Identifier = "MIT"
+precedence = "aggregate"

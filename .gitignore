@@ -14,3 +14,6 @@ dist/
 htmlcov/
 build/
 *.whl
+site/
+.cache/
+.claude/
