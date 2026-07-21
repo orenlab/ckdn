@@ -69,6 +69,16 @@ def test_run_one_and_digest_roundtrip(tmp_path: Path) -> None:
     assert loaded["status"] == "pass"
 
 
+def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
+    # Digest paths are normalized to forward slashes so a digest is byte-stable
+    # across OSes (no-op on POSIX; normalizes backslashes on Windows).
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+    run_dir = result.digest["run_dir"]
+    assert "\\" not in run_dir
+    assert run_dir.startswith(".agent-runs/")
+
+
 def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,

@@ -122,9 +122,11 @@ def run_one(
     meta = build_meta(check=check.name, parser=check.parser, outcome=outcome)
     (run_dir / META_NAME).write_text(dump_json(meta), encoding="utf-8")
     try:
-        run_dir_rel = str(run_dir.relative_to(cfg.cwd))
+        # as_posix keeps the digest path separator stable across OSes, so a
+        # digest generated on Windows is byte-identical to one on POSIX.
+        run_dir_rel = run_dir.relative_to(cfg.cwd).as_posix()
     except ValueError:
-        run_dir_rel = str(run_dir)
+        run_dir_rel = run_dir.as_posix()
     digest = build_digest(
         check=check.name,
         status=status,

@@ -146,7 +146,8 @@ def build_alias_aggregate(
             "rc": member_rc,
         }
         if member_status != "pass":
-            row["run_dir"] = str(run_dir)
+            # as_posix so aggregate paths match digest paths across OSes.
+            row["run_dir"] = run_dir.as_posix()
         members.append(row)
     return {
         "schema": AGGREGATE_SCHEMA,
