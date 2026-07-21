@@ -23,6 +23,7 @@ from ckdn.app import (
     list_checks,
     list_runs,
     run_alias,
+    run_all,
     run_check,
     run_one,
 )
@@ -187,6 +188,81 @@ def test_aggregate_run_dir_matches_member_digest(
     result = run_alias(cfg, cfg.checks["g"])
     agg_member = result.aggregate["members"][0]
     assert agg_member["run_dir"] == result.members[0].digest["run_dir"]
+
+
+def _rc_by_suffix(run_dir: Path, fail_suffix: str) -> int:
+    return 1 if run_dir.name.endswith(fail_suffix) else 0
+
+
+def test_run_all_runs_every_atomic_skipping_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n'
+        '[check.b]\ncommand = "false"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["a", "b"]\n',
+    )
+
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=_rc_by_suffix(run_dir, "-b"),
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    result = run_all(cfg)
+    assert result.alias == "*"
+    assert result.aggregate["schema"] == "ckdn.aggregate/1"
+    # every atomic ran, in config order; the alias `g` is skipped
+    assert [m["check"] for m in result.aggregate["members"]] == ["a", "b"]
+    assert result.aggregate["status"] == "fail" and result.exit_code == 1
+
+
+def test_run_all_fail_fast_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.a]\ncommand = "false"\nparser = "generic"\n'
+        '[check.b]\ncommand = "true"\nparser = "generic"\n',
+    )
+
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=_rc_by_suffix(run_dir, "-a"),
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    result = run_all(cfg, fail_fast=True)
+    assert [m["check"] for m in result.aggregate["members"]] == ["a"]
 
 
 def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:

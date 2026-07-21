@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-check `env` table: overlays the subprocess environment for one check
   (inherited `PATH` etc. preserved), with `{run_dir}` substitution in values;
   never recorded in `meta.json`
+- `ckdn run --all [--fail-fast]`: run every atomic check in config order and
+  emit one `ckdn.aggregate/1` (`alias = "*"`); a single "verify the project"
+  step for CI
 
 ## [1.2.0] - 2026-07-21
 

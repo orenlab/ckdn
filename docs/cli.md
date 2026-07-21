@@ -10,6 +10,7 @@ Global flags (on commands that load config): `--config PATH`, `--cwd DIR`
 | Command                                  | Purpose                                                         |
 |------------------------------------------|-----------------------------------------------------------------|
 | `ckdn run <check> [--quiet] [-- extra…]` | run atomic check or alias; compact digest / aggregate on stdout |
+| `ckdn run --all [--fail-fast] [--quiet]`  | run every atomic check in config order → aggregate on stdout    |
 | `ckdn show [run-dir]`                    | pretty-print a stored digest (latest default)                   |
 | `ckdn list [-n N] [--json]`              | recent runs (text, or `{"runs": […]}` with `--json`)            |
 | `ckdn checks [--json]`                   | configured checks (text, or `{"checks": […]}` with `--json`)    |

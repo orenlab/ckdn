@@ -46,3 +46,16 @@ The aggregate contract:
 
 Read the aggregate to decide *which* member digest to open
 (`ckdn show <run-dir>`), then work from that digest.
+
+## Run everything: `ckdn run --all`
+
+`ckdn run --all` runs **every atomic check** in config order (aliases are
+skipped — they only group atomics) and emits one `ckdn.aggregate/1` with
+`alias = "*"`. It runs all checks by default; `--fail-fast` stops at the first
+non-green one. Same exit-code and routing rules as an alias aggregate, so it
+drops into CI as a single "verify the project" step.
+
+```bash
+ckdn run --all              # every atomic check, report them all
+ckdn run --all --fail-fast  # stop at the first failure
+```

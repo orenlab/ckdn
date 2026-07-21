@@ -204,6 +204,39 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
     )
 
 
+def run_all(cfg: Config, *, fail_fast: bool = False) -> AliasRunResult:
+    """Run every **atomic** check in config order and return one aggregate.
+
+    Aliases are skipped (they only group atomics, which all run here anyway).
+    Defaults to running every check; ``fail_fast`` stops at the first non-green
+    one. The aggregate uses ``alias = "*"`` to denote "all atomic checks".
+    """
+    results: list[AtomicRunResult] = []
+    for check in cfg.checks.values():
+        if check.is_alias:
+            continue
+        outcome = run_one(cfg, check, extra=[])
+        results.append(outcome)
+        if fail_fast and outcome.exit_code != 0:
+            break
+
+    exit_code = _alias_aggregate_exit(results)
+    status = "pass" if exit_code == 0 else "fail"
+    aggregate = build_alias_aggregate(
+        alias="*",
+        results=[(r.check, r.status, r.rc, r.digest["run_dir"]) for r in results],
+        status=status,
+        rc=exit_code,
+    )
+    return AliasRunResult(
+        alias="*",
+        status=status,
+        aggregate=aggregate,
+        members=tuple(results),
+        exit_code=exit_code,
+    )
+
+
 def run_check(
     cfg: Config,
     name: str,

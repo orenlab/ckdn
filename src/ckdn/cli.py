@@ -31,6 +31,7 @@ from ckdn.app import (
     get_digest,
     list_checks,
     list_runs,
+    run_all,
     run_check,
 )
 from ckdn.app import run_one as app_run_one
@@ -82,6 +83,17 @@ def run_one(
 
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load(args)
+    if args.all:
+        if args.check is not None:
+            return _fail("pass a check name or --all, not both")
+        if args.extra:
+            return _fail("--all does not accept extra arguments")
+        result = run_all(cfg, fail_fast=args.fail_fast)
+        if not args.quiet:
+            print(dump_json(result.aggregate), end="")
+        return result.exit_code
+    if args.check is None:
+        return _fail("specify a check name, or --all to run every atomic check")
     try:
         outcome = run_check(cfg, args.check, extra=list(args.extra))
     except AppError as exc:
@@ -226,7 +238,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="run a configured check and emit its digest")
     add_config(p_run)
-    p_run.add_argument("check", help="check name from ckdn.toml")
+    p_run.add_argument(
+        "check", nargs="?", help="check name from ckdn.toml (omit with --all)"
+    )
+    p_run.add_argument(
+        "--all",
+        action="store_true",
+        dest="all",
+        help="run every atomic check in config order → aggregate on stdout",
+    )
+    p_run.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="with --all, stop at the first non-green check",
+    )
     p_run.add_argument("--quiet", action="store_true", help="do not print the digest")
     p_run.add_argument(
         "extra",

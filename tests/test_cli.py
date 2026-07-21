@@ -346,6 +346,27 @@ def test_run_one_rejects_alias_as_atomic(tmp_path: Path) -> None:
     assert isinstance(cli.run_one(cfg, alias, extra=[], quiet=True), int)
 
 
+def test_run_all_emits_aggregate(
+    tmp_path: Path, stub_execute: None, capsys: Any
+) -> None:
+    cfg = _cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n'
+        '[check.b]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["a"]\n',
+    )
+    assert cli.main(["run", "--all", "--config", str(cfg)]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["schema"] == "ckdn.aggregate/1" and doc["alias"] == "*"
+    assert [m["check"] for m in doc["members"]] == ["a", "b"]
+
+
+def test_run_all_rejects_check_and_missing_target(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    assert cli.main(["run", "--all", "a", "--config", str(cfg)]) == 2
+    assert cli.main(["run", "--config", str(cfg)]) == 2
+
+
 def test_checks_json(tmp_path: Path, capsys: Any) -> None:
     cfg = _cfg(
         tmp_path,
