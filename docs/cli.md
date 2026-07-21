@@ -1,0 +1,23 @@
+---
+icon: lucide/terminal
+---
+
+# CLI
+
+Global flags (on commands that load config): `--config PATH`, `--cwd DIR`
+(working directory for subprocesses and relative `runs_dir`; else `CKDN_CWD`).
+
+| Command                                  | Purpose                                                         |
+|------------------------------------------|-----------------------------------------------------------------|
+| `ckdn run <check> [--quiet] [-- extra…]` | run atomic check or alias; compact digest / aggregate on stdout |
+| `ckdn show [run-dir]`                    | pretty-print a stored digest (latest default)                   |
+| `ckdn list [-n N]`                       | recent runs                                                     |
+| `ckdn checks`                            | configured checks (atomics + aliases)                           |
+| `ckdn gc [--keep N]`                     | prune old run directories                                       |
+| `ckdn init`                              | write starter `ckdn.toml`                                       |
+| `ckdn schema [id]`                       | print a packaged JSON Schema, or list schema ids                |
+| `ckdn verify-config [--locked]`          | validate command policy (+ optional `ckdn.lock.toml`)           |
+| `ckdn lock-config [-o path]`             | write command SHA-256 lock file for CI                          |
+
+Alias stdout is **only** the aggregate; member digests stay under
+`.agent-runs/` for `ckdn show`.
