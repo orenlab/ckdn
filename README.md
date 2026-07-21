@@ -120,8 +120,8 @@ Full documentation lives at **[orenlab.github.io/ckdn](https://orenlab.github.io
 ## License & community
 
 - Copyright (c) 2026 Den Rozhnovskiy \<rozhnovskiydenis@gmail.com\>
-- License: [MIT](LICENSE) (`SPDX-License-Identifier: MIT`)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
-- Security: [SECURITY.md](SECURITY.md)
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Code of Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- License: [MIT](https://github.com/orenlab/ckdn/blob/main/LICENSE) (`SPDX-License-Identifier: MIT`)
+- Changelog: [CHANGELOG.md](https://github.com/orenlab/ckdn/blob/main/CHANGELOG.md)
+- Security: [SECURITY.md](https://github.com/orenlab/ckdn/blob/main/SECURITY.md)
+- Contributing: [CONTRIBUTING.md](https://github.com/orenlab/ckdn/blob/main/CONTRIBUTING.md)
+- Code of Conduct: [CODE_OF_CONDUCT.md](https://github.com/orenlab/ckdn/blob/main/CODE_OF_CONDUCT.md)
