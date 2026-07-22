@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -168,6 +170,35 @@ def test_timeout_kills_the_whole_tree_and_never_hangs(tmp_path: Path) -> None:
     assert _wait_dead(grandchild), "grandchild outlived the terminated group"
 
 
+# The purest form of the deadlock: the direct child exits *immediately* and
+# leaves a grandchild holding the inherited stdout. Waiting on the child is not
+# enough — with a pipe, EOF only arrives when the grandchild goes too.
+_ORPHAN_HOLDS_STDOUT = (
+    "import subprocess,sys;"
+    "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']);"
+    "sys.stdout.write(str(p.pid));sys.stdout.flush()"
+)
+
+
+def test_a_descendant_holding_stdout_cannot_block_the_run(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    start = time.monotonic()
+    outcome = execute(
+        [sys.executable, "-c", _ORPHAN_HOLDS_STDOUT], tmp_path, run_dir, 60
+    )
+    elapsed = time.monotonic() - start
+    grandchild = int(outcome.log_text.strip())
+    try:
+        assert outcome.rc == 0
+        assert outcome.timed_out is False
+        # The bug: this returned only when the *grandchild* finally exited.
+        assert elapsed < 10, "execute() waited on a descendant that outlived the child"
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(grandchild, signal.SIGKILL)
+
+
 def test_interrupt_terminates_tree_records_evidence_and_rc_130(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -241,6 +272,20 @@ def test_lock_dir_is_never_mistaken_for_a_run(tmp_path: Path) -> None:
         assert resolve_run_dir(runs, ".locks") is None
         prune(runs, keep=1)
         assert (runs / ".locks").is_dir(), "prune must not delete bookkeeping"
+
+
+def test_a_zero_byte_lock_is_reclaimed(tmp_path: Path) -> None:
+    """A crash between creating the lock file and writing the pid into it.
+
+    The holder is unreadable, so it must be treated as stale — otherwise the
+    check is wedged forever with no process to blame.
+    """
+    lock = tmp_path / ".locks" / "y.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("", encoding="utf-8")
+    with run_lock(tmp_path, "y"):
+        assert lock.read_text(encoding="utf-8").strip() == str(os.getpid())
+    assert not lock.exists()
 
 
 def test_run_lock_reclaims_a_stale_lock_and_releases(tmp_path: Path) -> None:
