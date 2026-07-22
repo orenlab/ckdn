@@ -488,6 +488,25 @@ def execute(
     )
 
 
+def _publish_symlink(runs_dir: Path, run_dir: Path) -> bool:
+    """Swap ``latest`` into place by rename; False if symlinks are unusable."""
+    scratch = runs_dir / f".{LATEST_LINK}.{os.getpid()}.tmp"
+    try:
+        scratch.symlink_to(run_dir.name, target_is_directory=True)
+        os.replace(scratch, runs_dir / LATEST_LINK)
+    except OSError:
+        with contextlib.suppress(OSError):
+            scratch.unlink()
+        return False
+    # Drop a marker left by an earlier fallback: beside a working link it
+    # contradicts it, and readers cannot tell which pointer is newer.
+    marker = runs_dir / LATEST_FILE
+    if marker.is_file():
+        with contextlib.suppress(OSError):
+            marker.unlink()
+    return True
+
+
 def update_latest(runs_dir: Path, run_dir: Path) -> None:
     """Point ``latest`` at ``run_dir``, atomically.
 
@@ -497,26 +516,16 @@ def update_latest(runs_dir: Path, run_dir: Path) -> None:
     — the loser failing over to the marker, leaving two pointers that
     disagreed about which run was latest.
     """
-    scratch = runs_dir / f".{LATEST_LINK}.{os.getpid()}.tmp"
-    try:
-        scratch.symlink_to(run_dir.name, target_is_directory=True)
-        os.replace(scratch, runs_dir / LATEST_LINK)
-    except OSError:
-        with contextlib.suppress(OSError):
-            scratch.unlink()
-        marker = runs_dir / f".{LATEST_FILE}.{os.getpid()}.tmp"
-        marker.write_text(run_dir.name + "\n", encoding="utf-8")
-        os.replace(marker, runs_dir / LATEST_FILE)
+    # Windows gets the marker unconditionally. Symlink creation needs
+    # privilege there, `os.replace` cannot replace a *directory* (and a run-dir
+    # symlink is one), and `LATEST` and `latest` are a single path on a
+    # case-insensitive filesystem -- publishing both forms collided with
+    # itself.
+    if sys.platform != "win32" and _publish_symlink(runs_dir, run_dir):
         return
-    # Drop a marker left by an earlier fallback: next to a working link it
-    # contradicts it, and readers cannot tell which pointer is newer.
-    # `is_file` is the guard that matters — on a case-insensitive filesystem
-    # (macOS, Windows) `LATEST` and `latest` are the same path, and there it
-    # resolves to the symlink we just published, which is a directory.
-    marker = runs_dir / LATEST_FILE
-    if marker.is_file():
-        with contextlib.suppress(OSError):
-            marker.unlink()
+    scratch = runs_dir / f".{LATEST_FILE}.{os.getpid()}.tmp"
+    scratch.write_text(run_dir.name + "\n", encoding="utf-8")
+    os.replace(scratch, runs_dir / LATEST_FILE)
 
 
 def _contained_run(runs_dir: Path, name: str) -> Path | None:
