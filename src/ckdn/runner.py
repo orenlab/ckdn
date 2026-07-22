@@ -107,9 +107,46 @@ class RunLockError(RuntimeError):
     """Another live process already runs this check in this runs directory."""
 
 
+def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
+    """Ask the kernel directly; ``os.kill(pid, 0)`` is not usable here.
+
+    On Windows a dead pid makes ``os.kill(pid, 0)`` raise a bare ``OSError``
+    (``WinError 87``), indistinguishable from a real error -- treating that as
+    "alive" would make a stale lock permanent.
+    """
+    if sys.platform != "win32":
+        # Unreachable at runtime (guarded by the caller); the check narrows the
+        # platform so type checkers on POSIX do not read `ctypes.WinDLL`.
+        return False
+
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(
+        process_query_limited_information, False, wintypes.DWORD(pid)
+    )
+    if not handle:
+        return False  # gone, or never existed
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        # A process that really exits with 259 is misread as alive; that is the
+        # accepted ambiguity of this API, and it only delays reclaiming a lock.
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if sys.platform == "win32":  # pragma: no cover - Windows CI
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

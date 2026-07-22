@@ -21,6 +21,7 @@ from ckdn.runner import (
     RC_NOT_FOUND,
     RC_TIMEOUT,
     RunLockError,
+    _pid_alive,
     build_tokens,
     create_run_dir,
     execute,
@@ -136,14 +137,15 @@ _SPAWNS_GRANDCHILD = (
 
 
 def _wait_dead(pid: int, limit: float = 10.0) -> bool:
+    """Liveness the same way the runner sees it (portable across OSes).
+
+    Both directions of `_pid_alive` are pinned independently by the run-lock
+    tests below, so reusing it here is not circular.
+    """
     deadline = time.monotonic() + limit
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not _pid_alive(pid):
             return True
-        except PermissionError:
-            return False
         time.sleep(0.05)
     return False
 
@@ -192,6 +194,25 @@ def test_interrupt_terminates_tree_records_evidence_and_rc_130(
     assert (run_dir / LOG_NAME).exists(), "evidence must exist after an interrupt"
     grandchild = int(outcome.log_text.strip())
     assert _wait_dead(grandchild), "grandchild outlived the interrupt"
+
+
+def test_pid_alive_tells_a_live_process_from_a_dead_one() -> None:
+    """Windows cannot use `os.kill(pid, 0)`; both branches must agree here.
+
+    Reading a dead pid as alive would make a stale lock permanent — the check
+    could never be run again in that workspace.
+    """
+    live = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    try:
+        assert _pid_alive(live.pid) is True
+        assert _pid_alive(dead.pid) is False
+        assert _pid_alive(0) is False
+        assert _pid_alive(-1) is False
+    finally:
+        live.kill()
+        live.wait()
 
 
 def test_run_lock_refuses_a_second_live_run(tmp_path: Path) -> None:
