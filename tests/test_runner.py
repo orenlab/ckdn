@@ -287,27 +287,35 @@ def test_pid_alive_tells_a_live_process_from_a_dead_one() -> None:
         live.wait()
 
 
+# The holder reports its *own* pid rather than letting the test assume
+# Popen.pid: on Windows a venv's python.exe can be a trampoline, so the pid
+# the parent sees is the launcher's, not the interpreter's.
 _HOLD_LOCK = """
-import sys, time
+import os, pathlib, sys, time
 sys.path.insert(0, sys.argv[1])
 from ckdn.runner import run_lock
-with run_lock(__import__("pathlib").Path(sys.argv[2]), sys.argv[3]):
-    print("held", flush=True)
+with run_lock(pathlib.Path(sys.argv[2]), sys.argv[3]):
+    print(os.getpid(), flush=True)
     time.sleep(60)
 """
 
 
-def test_run_lock_refuses_a_second_live_run(tmp_path: Path) -> None:
-    """Another *process* holds it, which is what the lock is actually for."""
+def _start_holder(tmp_path: Path, check: str) -> tuple[subprocess.Popen[str], int]:
+    """Start a process that holds ``check``'s lock; return it and its real pid."""
     src = str(Path(__file__).resolve().parent.parent / "src")
     holder = subprocess.Popen(
-        [sys.executable, "-c", _HOLD_LOCK, src, str(tmp_path), "pytest"],
+        [sys.executable, "-c", _HOLD_LOCK, src, str(tmp_path), check],
         stdout=subprocess.PIPE,
         text=True,
     )
+    assert holder.stdout is not None
+    return holder, int(holder.stdout.readline().strip())
+
+
+def test_run_lock_refuses_a_second_live_run(tmp_path: Path) -> None:
+    """Another *process* holds it, which is what the lock is actually for."""
+    holder, _ = _start_holder(tmp_path, "pytest")
     try:
-        assert holder.stdout is not None
-        assert holder.stdout.readline().strip() == "held"
         with (
             pytest.raises(RunLockError, match="already running"),
             run_lock(tmp_path, "pytest"),
@@ -404,20 +412,13 @@ def test_a_killed_run_is_named_in_the_next_runs_warning(tmp_path: Path) -> None:
     survives a kill and identifies who left it, without reading the file
     while the lock is held.
     """
-    src = str(Path(__file__).resolve().parent.parent / "src")
-    holder = subprocess.Popen(
-        [sys.executable, "-c", _HOLD_LOCK, src, str(tmp_path), "named"],
-        stdout=subprocess.PIPE,
-        text=True,
-    )
-    assert holder.stdout is not None
-    assert holder.stdout.readline().strip() == "held"
+    holder, holder_pid = _start_holder(tmp_path, "named")
     holder.kill()
     holder.wait()
 
     with run_lock(tmp_path, "named") as note:
         assert note is not None
-        assert f"ckdn pid {holder.pid}" in note
+        assert f"ckdn pid {holder_pid}" in note
 
 
 @pytest.mark.skipif(
