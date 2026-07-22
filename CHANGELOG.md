@@ -75,6 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the wait now polls. A second Ctrl-C during the grace period, or one during
     parsing or the evidence write, no longer abandons the run directory
     without a digest.
+  - `latest` is published by rename. Unlinking it first left a window with no
+    pointer at all, and two runs finishing together could both unlink and race
+    to create — the loser falling back to the `LATEST` marker, leaving two
+    pointers that disagreed about which run was newest.
+  - Lock file names are unique per check. The sanitizer mapped every unsafe
+    character to `_`, so `py.test` and `py_test` shared one lock: each refused
+    to start while the *other* ran, and reported the other as a run that did
+    not exit cleanly.
   - Run locks are real kernel file locks (`flock` / `msvcrt.locking`) instead
     of a pid file. The old protocol could hand one check to two runs through
     three separate races, could not see a second *thread* of ckdn's own

@@ -57,6 +57,8 @@ EMPTY_LOG_SHA256 = hashlib.sha256(b"").hexdigest()
 #: `os.kill` raises OverflowError, not OSError, for a pid wider than a C
 #: int -- no caller can be expected to catch that, so refuse it up front.
 _MAX_PID = 2**31 - 1
+#: Windows `OpenProcess` failure that means "it exists, but not for you".
+_ERROR_ACCESS_DENIED = 5
 
 
 @dataclass(frozen=True)
@@ -196,7 +198,10 @@ def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
         process_query_limited_information, False, wintypes.DWORD(pid)
     )
     if not handle:
-        return False  # gone, or never existed
+        # ACCESS_DENIED means the process exists and simply is not ours to
+        # query — the POSIX branch answers "alive" for exactly that case, and
+        # calling it dead would be the one error worth avoiding here.
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
     try:
         code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
@@ -223,8 +228,17 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _lock_path(runs_dir: Path, check: str) -> Path:
+    """One lock per check name, and never one lock for two of them.
+
+    Sanitizing alone is not injective: every unsafe character becomes ``_``,
+    so ``py.test`` and ``py_test`` collided on a single lock and each would
+    refuse to run while the *other* was in flight — and report the other as a
+    run that "did not exit cleanly". The readable part stays for humans; the
+    digest is what makes the name unique.
+    """
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in check)
-    return runs_dir / ".locks" / f"{safe}.lock"
+    tag = hashlib.sha256(check.encode("utf-8")).hexdigest()[:8]
+    return runs_dir / ".locks" / f"{safe}-{tag}.lock"
 
 
 def _try_lock(fd: int) -> bool:
@@ -475,15 +489,34 @@ def execute(
 
 
 def update_latest(runs_dir: Path, run_dir: Path) -> None:
-    """Point ``latest`` at ``run_dir``; fall back to a marker file on
-    filesystems/platforms where symlinks are unavailable."""
-    link = runs_dir / LATEST_LINK
+    """Point ``latest`` at ``run_dir``, atomically.
+
+    Falls back to a marker file where symlinks are unavailable. Both forms are
+    published by rename: unlinking first left a window with no pointer at all,
+    and two runs finishing together could both unlink and then race to create
+    — the loser failing over to the marker, leaving two pointers that
+    disagreed about which run was latest.
+    """
+    scratch = runs_dir / f".{LATEST_LINK}.{os.getpid()}.tmp"
     try:
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.symlink_to(run_dir.name, target_is_directory=True)
+        scratch.symlink_to(run_dir.name, target_is_directory=True)
+        os.replace(scratch, runs_dir / LATEST_LINK)
     except OSError:
-        (runs_dir / LATEST_FILE).write_text(run_dir.name + "\n", encoding="utf-8")
+        with contextlib.suppress(OSError):
+            scratch.unlink()
+        marker = runs_dir / f".{LATEST_FILE}.{os.getpid()}.tmp"
+        marker.write_text(run_dir.name + "\n", encoding="utf-8")
+        os.replace(marker, runs_dir / LATEST_FILE)
+        return
+    # Drop a marker left by an earlier fallback: next to a working link it
+    # contradicts it, and readers cannot tell which pointer is newer.
+    # `is_file` is the guard that matters — on a case-insensitive filesystem
+    # (macOS, Windows) `LATEST` and `latest` are the same path, and there it
+    # resolves to the symlink we just published, which is a directory.
+    marker = runs_dir / LATEST_FILE
+    if marker.is_file():
+        with contextlib.suppress(OSError):
+            marker.unlink()
 
 
 def _contained_run(runs_dir: Path, name: str) -> Path | None:

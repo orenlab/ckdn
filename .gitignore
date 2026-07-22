@@ -17,3 +17,6 @@ build/
 site/
 .cache/
 .claude/
+
+# stray run output from a config whose runs_dir is not .agent-runs
+runs/

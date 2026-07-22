@@ -31,6 +31,7 @@ from ckdn.digest import DIGEST_NAME, META_NAME
 from ckdn.runner import (
     LOG_NAME,
     RunOutcome,
+    _lock_path,
     create_run_dir,
     resolve_run_dir,
     update_latest,
@@ -115,7 +116,7 @@ def test_reclaimed_lock_is_reported_without_changing_the_verdict(
     exactly what the exit code earned.
     """
     cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    lock = cfg.runs_dir / ".locks" / "ok.lock"
+    lock = _lock_path(cfg.runs_dir, "ok")
     lock.parent.mkdir(parents=True)
     lock.write_text("ckdn pid 4242", encoding="utf-8")  # killed before releasing
 

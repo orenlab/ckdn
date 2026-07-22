@@ -27,6 +27,7 @@ from ckdn.runner import (
     RC_NOT_FOUND,
     RC_TIMEOUT,
     RunLockError,
+    _lock_path,
     _pid_alive,
     build_tokens,
     create_run_dir,
@@ -205,6 +206,25 @@ def test_a_descendant_holding_stdout_cannot_block_the_run(tmp_path: Path) -> Non
             os.kill(grandchild, signal.SIGTERM)
 
 
+def _interrupt_once_the_child_has_spoken(log: Path) -> None:
+    """Interrupt the main thread as soon as the child has produced output.
+
+    A fixed delay is a coin flip on a loaded runner: too short and the
+    grandchild's pid is not in the log yet, too long and the suite drags for
+    no reason. Waiting for the evidence itself is both faster and stable.
+    """
+
+    def _wait_then_interrupt() -> None:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if log.exists() and log.read_bytes().strip():
+                break
+            time.sleep(0.02)
+        _thread.interrupt_main()
+
+    threading.Thread(target=_wait_then_interrupt, daemon=True).start()
+
+
 def test_interrupt_terminates_tree_records_evidence_and_rc_130(
     tmp_path: Path,
 ) -> None:
@@ -217,14 +237,10 @@ def test_interrupt_terminates_tree_records_evidence_and_rc_130(
     """
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    timer = threading.Timer(1.5, _thread.interrupt_main)
-    timer.start()
-    try:
-        outcome = execute(
-            [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, run_dir, None
-        )
-    finally:
-        timer.cancel()
+    _interrupt_once_the_child_has_spoken(run_dir / LOG_NAME)
+    outcome = execute(
+        [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, run_dir, None
+    )
 
     assert outcome.interrupted is True and outcome.timed_out is False
     assert outcome.rc == RC_INTERRUPTED == 130
@@ -377,7 +393,7 @@ def test_a_lock_never_released_warns_without_naming_a_target(
     and a pid can be recycled, so the note must not point at anything to kill,
     and ckdn must kill nothing by itself.
     """
-    lock = tmp_path / ".locks" / "z.lock"
+    lock = _lock_path(tmp_path, "z")
     lock.parent.mkdir(parents=True)
     lock.write_text("ckdn pid 4242", encoding="utf-8")  # killed before releasing
 
@@ -397,7 +413,7 @@ def test_a_clean_acquire_yields_no_warning(tmp_path: Path) -> None:
 
 
 def test_the_lock_empties_its_record_on_exit(tmp_path: Path) -> None:
-    lock = tmp_path / ".locks" / "x.lock"
+    lock = _lock_path(tmp_path, "x")
     with run_lock(tmp_path, "x"):
         pass  # the record cannot be read from here: Windows locks are mandatory
     assert lock.read_text(encoding="utf-8") == "", (
@@ -545,3 +561,37 @@ def test_meta_hash_describes_the_bytes_that_are_on_disk(tmp_path: Path) -> None:
     assert on_disk == b"a\r\nb"
     assert outcome.log_sha256 == hashlib.sha256(on_disk).hexdigest()
     assert outcome.log_size == len(on_disk)
+
+
+def test_two_checks_whose_names_sanitize_alike_get_separate_locks(
+    tmp_path: Path,
+) -> None:
+    """`py.test` and `py_test` are different checks.
+
+    Sanitizing every unsafe character to `_` made them share one lock: each
+    refused to start while the *other* ran, and reported the other as a run
+    that "did not exit cleanly".
+    """
+    with run_lock(tmp_path, "py.test"), run_lock(tmp_path, "py_test") as note:
+        assert note is None, "the other check's record was read as this one's"
+
+
+def test_latest_always_points_somewhere_while_being_updated(
+    tmp_path: Path,
+) -> None:
+    """Publishing by rename leaves no window with no pointer at all."""
+    runs = tmp_path / "runs"
+    first = create_run_dir(runs, "a")
+    update_latest(runs, first)
+    assert resolve_run_dir(runs) is not None
+
+    second = create_run_dir(runs, "b")
+    update_latest(runs, second)
+    resolved = resolve_run_dir(runs)
+    assert resolved is not None
+    assert resolved.resolve() == second.resolve()
+    # A stale marker file must never survive next to a working link:
+    # readers cannot tell which of two disagreeing pointers is newer. On a
+    # case-insensitive filesystem the two names *are* one path, so the test
+    # is about a regular file, not about the name existing.
+    assert not (runs / LATEST_FILE).is_file()
