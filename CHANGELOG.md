@@ -51,85 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Critical: a hung check could hang the whole machine.** `execute()` read the
-  child's output through a pipe, whose write end every descendant inherits, so
-  draining it blocked until *all* of them exited. Killing the direct child
-  (`uv`) left `pytest` and its workers holding the pipe, and ckdn waited on EOF
-  forever while the orphans kept burning CPU. Interrupting produced an empty
-  run directory — no log, no meta, no digest — because artifacts were only
-  written after the subprocess returned.
-  - The log now streams straight into `full.log`: no pipe, no deadlock, and
-    partial evidence survives an interrupt.
-  - The child starts in its own process group (POSIX session /
-    Windows `CREATE_NEW_PROCESS_GROUP`) and the whole **group** is terminated
-    on timeout, on `SIGINT`, on a clean exit, and on any other path:
-    `SIGTERM` → grace → `SIGKILL` for whatever is still there. Escalation
-    watches the group rather than the direct child — a wrapper like `uv` dies
-    on the first `SIGTERM` while the tool it launched ignores it, and waiting
-    on the child alone meant `SIGKILL` was never sent. Two limits are stated
-    in the [status model](docs/status-model.md) rather than promised away: a
-    check that detaches into its own session escapes the group, and `kill -9`
-    on ckdn itself runs no cleanup at all.
-  - Ctrl-C is delivered while a check runs. `Popen.wait(None)` blocks
-    uninterruptibly on Windows, so keypresses were ignored entirely there;
-    the wait now polls. A second Ctrl-C during the grace period, or one during
-    parsing or the evidence write, no longer abandons the run directory
-    without a digest — the protected step builds the documents as well as
-    writing them, and its retry holds `SIGINT` off rather than racing the
-    next keypress.
-  - A Ctrl-C is `rc=130` wherever it lands, including after the command has
-    already exited and while its output is being parsed. That path kept the
-    tool's own exit code, so a single `ckdn run` exited `1` with `"rc": 0` in
-    a digest that also said `interrupted: true` — contradicting this very
-    entry. The command's own code is kept in the run's notes.
-  - `latest` is published by rename. Unlinking it first left a window with no
-    pointer at all, and two runs finishing together could both unlink and race
-    to create — the loser falling back to the `LATEST` marker, leaving two
-    pointers that disagreed about which run was newest.
-  - Lock file names are unique per check. The sanitizer mapped every unsafe
-    character to `_`, so `py.test` and `py_test` shared one lock: each refused
-    to start while the *other* ran, and reported the other as a run that did
-    not exit cleanly.
-  - Run locks are real kernel file locks (`flock` / `msvcrt.locking`) instead
-    of a pid file. The old protocol could hand one check to two runs through
-    three separate races, could not see a second *thread* of ckdn's own
-    process (which is how the MCP server runs checks), wedged a check
-    permanently on a pid too wide for a C `int`, and turned a failed unlink
-    into a permanent false "did not exit cleanly" note.
-  - New `rc=130` plus an `interrupted: true` field on the digest, the
-    aggregate and `meta.json` — a reason, like `timed_out`. Code that only
-    reads `status` still just sees `error`, but the **schema documents are
-    closed** (`additionalProperties: false`): a validator pinned to the copies
-    exported from 1.2.0 will reject the new field, so re-export them with
-    `ckdn schema` when upgrading. Being cut short outranks every other signal
-    in reconcile — by Ctrl-C *or* by timeout — so partial evidence can never
-    be read as `fail` or `parse_mismatch`.
-  - Alias and `--all` sequences stop on interrupt instead of starting the next
-    check, and the aggregate exits `130` rather than passing through an
-    earlier red member's code; the CLI exits `130` instead of a traceback.
-  - `meta.json`'s `log_sha256`/`log_bytes` describe `full.log` as it sits on
-    disk. They were computed from the decoded text, which collapses CRLF, so
-    an independent `sha256 full.log` disagreed for almost any Windows tool's
-    output and read as tampered evidence.
-  - `ckdn baseline` refuses to record an interrupted or untrusted run instead
-    of overwriting the accepted findings with a partial set — which would
-    announce the whole existing backlog as new on the next gate.
-  - Pruning skips run directories that have no digest yet, so retiring old
-    runs of one check can no longer delete another check's run mid-write.
-  - `AppError` (a refused start, e.g. a lock conflict) is reported as
-    `ckdn: …` with exit `2` on every command. `run --all` and `baseline` let
-    it escape as a traceback with exit `1` — the code that means "this check
-    is red", which CI could not tell apart from a real failure.
-  - Runs are serialized per `(runs_dir, check)`: a second concurrent run of the
-    same check is refused (stale locks are reclaimed), so a hung run cannot be
-    compounded by a retry.
-  - Reclaiming a stale lock says so in the run's notes: the previous run did
-    not exit cleanly and may have left processes behind. A run killed with
-    `SIGKILL` executes no cleanup, so this is the only honest signal left. It
-    is advisory — it describes the *previous* run and never changes this run's
-    status — and ckdn stops nothing on its own: only its own pid is ever
-    recorded (never the child's process group), and a recycled pid would make
-    an automatic kill land on an unrelated process.
+- **Critical: a hung check could hang the whole machine.** The log streams to
+  `full.log` instead of a pipe, and the child's whole process group is
+  terminated on timeout, on Ctrl-C and on a clean exit
+- Ctrl-C reports `rc=130` and always leaves evidence; timeouts and interrupts
+  reconcile to `error`, and an alias exits `130`
+- New `interrupted` field on digest, aggregate and `meta.json`. The packaged
+  schemas are closed — re-export with `ckdn schema` if you pinned the 1.2.0
+  copies
+- Run locks are kernel file locks: no double runs, no wedging on a stale pid
+- `meta.json`'s `log_sha256` / `log_bytes` match `full.log` on disk
+- `ckdn baseline` refuses an interrupted or untrusted run
+- `prune` skips runs that have no digest yet
+- A refused start exits `2` with a message, not a traceback and exit `1`
+- `latest` is published atomically
 
 ## [1.2.0] - 2026-07-21
 
