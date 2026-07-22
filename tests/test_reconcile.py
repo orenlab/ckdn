@@ -4,6 +4,7 @@
 
 from ckdn.parsers.base import Finding, ParseResult
 from ckdn.reconcile import reconcile
+from ckdn.runner import RC_INTERRUPTED, RC_TIMEOUT
 
 
 def _finding() -> Finding:
@@ -79,3 +80,28 @@ def test_generic_checks_fail_without_evidence() -> None:
     status, _, tail = reconcile(3, ParseResult(evidence_expected=False))
     assert status == "fail"
     assert tail is True
+
+
+def test_timeout_is_error_not_a_verdict() -> None:
+    """A killed tool's findings describe the moment it died, not the code.
+
+    rc=124 with gate failures used to read as `fail` — a verdict drawn from
+    evidence that was cut off mid-write, and the opposite of what the status
+    model documents.
+    """
+    status, reason, tail = reconcile(
+        RC_TIMEOUT,
+        ParseResult(gate_failures=["line coverage 12.0% is below fail_under=95.0%"]),
+        timed_out=True,
+    )
+    assert status == "error"
+    assert "timed out" in reason
+    assert tail is True
+
+
+def test_interruption_still_outranks_a_timeout() -> None:
+    status, reason, _ = reconcile(
+        RC_INTERRUPTED, ParseResult(), interrupted=True, timed_out=True
+    )
+    assert status == "error"
+    assert "interrupted" in reason

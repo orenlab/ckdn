@@ -4,18 +4,22 @@
 
 from __future__ import annotations
 
+import _thread
 import contextlib
 import datetime as dt
+import hashlib
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
 from ckdn.runner import (
+    DIGEST_NAME,
     LATEST_FILE,
     LATEST_LINK,
     LOG_NAME,
@@ -202,24 +206,25 @@ def test_a_descendant_holding_stdout_cannot_block_the_run(tmp_path: Path) -> Non
 
 
 def test_interrupt_terminates_tree_records_evidence_and_rc_130(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
+    """A real interrupt, not an injected one.
+
+    ``_thread.interrupt_main`` raises ``KeyboardInterrupt`` in the main thread
+    exactly the way a console Ctrl-C does — which is the point: an unbounded
+    ``Popen.wait(None)`` never notices it on Windows, so a monkeypatched
+    ``wait`` would pass here while the real thing ignored every keypress.
+    """
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    real_wait = subprocess.Popen.wait
-    seen: list[int] = []
-
-    def _fake_wait(self: subprocess.Popen[bytes], timeout: float | None = None) -> int:
-        seen.append(1)
-        if len(seen) == 1:  # first wait: the user pressed Ctrl-C
-            time.sleep(1.0)  # let the child emit its grandchild's pid first
-            raise KeyboardInterrupt
-        return int(real_wait(self, timeout=timeout))
-
-    monkeypatch.setattr(subprocess.Popen, "wait", _fake_wait)
-    outcome = execute(
-        [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, run_dir, None
-    )
+    timer = threading.Timer(1.5, _thread.interrupt_main)
+    timer.start()
+    try:
+        outcome = execute(
+            [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, run_dir, None
+        )
+    finally:
+        timer.cancel()
 
     assert outcome.interrupted is True and outcome.timed_out is False
     assert outcome.rc == RC_INTERRUPTED == 130
@@ -229,12 +234,37 @@ def test_interrupt_terminates_tree_records_evidence_and_rc_130(
     assert _wait_dead(grandchild), "grandchild outlived the interrupt"
 
 
-def test_pid_alive_tells_a_live_process_from_a_dead_one() -> None:
-    """Windows cannot use `os.kill(pid, 0)`; both branches must agree here.
+def test_a_term_immune_grandchild_is_still_killed(tmp_path: Path) -> None:
+    """The wrapper dies on SIGTERM; the tool it launched ignores it.
 
-    Reading a dead pid as alive would make a stale lock permanent — the check
-    could never be run again in that workspace.
+    Escalation used to watch the direct child, so the wrapper's prompt exit
+    ended the wait and SIGKILL was never sent — while the digest claimed the
+    process tree had been terminated.
     """
+    child = (
+        "import subprocess,sys,time;"
+        "gc=subprocess.Popen([sys.executable,'-c',"
+        '"import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);"'
+        '"time.sleep(120)"]);'
+        "sys.stdout.write(str(gc.pid));sys.stdout.flush();time.sleep(120)"
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outcome = execute([sys.executable, "-c", child], tmp_path, run_dir, 1.0)
+    grandchild = int(outcome.log_text.strip())
+    try:
+        assert outcome.timed_out is True
+        assert _wait_dead(grandchild), (
+            "a SIGTERM-immune descendant survived, but the note said the tree "
+            "was terminated"
+        )
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(grandchild, signal.SIGKILL)
+
+
+def test_pid_alive_tells_a_live_process_from_a_dead_one() -> None:
+    """Windows cannot use `os.kill(pid, 0)`; both branches must agree here."""
     live = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
     dead = subprocess.Popen([sys.executable, "-c", ""])
     dead.wait()
@@ -243,17 +273,36 @@ def test_pid_alive_tells_a_live_process_from_a_dead_one() -> None:
         assert _pid_alive(dead.pid) is False
         assert _pid_alive(0) is False
         assert _pid_alive(-1) is False
+        # `os.kill` raises OverflowError here, which is not an OSError and so
+        # escaped every handler: the check stayed wedged until someone deleted
+        # the lock file by hand.
+        assert _pid_alive(2**31 + 5) is False
     finally:
         live.kill()
         live.wait()
 
 
+_HOLD_LOCK = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from ckdn.runner import run_lock
+with run_lock(__import__("pathlib").Path(sys.argv[2]), sys.argv[3]):
+    print("held", flush=True)
+    time.sleep(60)
+"""
+
+
 def test_run_lock_refuses_a_second_live_run(tmp_path: Path) -> None:
-    holder = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
+    """Another *process* holds it, which is what the lock is actually for."""
+    src = str(Path(__file__).resolve().parent.parent / "src")
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_LOCK, src, str(tmp_path), "pytest"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     try:
-        lock = tmp_path / ".locks" / "pytest.lock"
-        lock.parent.mkdir(parents=True)
-        lock.write_text(str(holder.pid), encoding="utf-8")
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
         with (
             pytest.raises(RunLockError, match="already running"),
             run_lock(tmp_path, "pytest"),
@@ -262,6 +311,23 @@ def test_run_lock_refuses_a_second_live_run(tmp_path: Path) -> None:
     finally:
         holder.kill()
         holder.wait()
+
+
+def test_run_lock_refuses_a_second_acquire_from_the_same_process(
+    tmp_path: Path,
+) -> None:
+    """The MCP server runs sync tools on a thread pool.
+
+    Judging the lock by "is that pid alive?" answered *yes, it is me* and
+    handed the same check to both threads — the one case the lock exists to
+    prevent that a pid can never detect.
+    """
+    with (
+        run_lock(tmp_path, "same"),
+        pytest.raises(RunLockError, match="already running"),
+        run_lock(tmp_path, "same"),
+    ):
+        pass
 
 
 def test_lock_dir_is_never_mistaken_for_a_run(tmp_path: Path) -> None:
@@ -276,40 +342,35 @@ def test_lock_dir_is_never_mistaken_for_a_run(tmp_path: Path) -> None:
         assert (runs / ".locks").is_dir(), "prune must not delete bookkeeping"
 
 
-def test_a_zero_byte_lock_is_reclaimed(tmp_path: Path) -> None:
-    """A crash between creating the lock file and writing the pid into it.
+def test_a_clean_release_leaves_no_warning_for_the_next_run(tmp_path: Path) -> None:
+    """Two runs in a row: the second must not be told the first crashed.
 
-    The holder is unreadable, so it must be treated as stale — otherwise the
-    check is wedged forever with no process to blame.
+    An unlink that failed (a Windows scanner holding the file is enough) used
+    to leave the record behind and make every later run report a crash that
+    never happened. The record is emptied instead, which cannot fail that way.
     """
-    lock = tmp_path / ".locks" / "y.lock"
-    lock.parent.mkdir(parents=True)
-    lock.write_text("", encoding="utf-8")
-    with run_lock(tmp_path, "y") as note:
-        assert lock.read_text(encoding="utf-8").strip() == str(os.getpid())
-    assert not lock.exists()
-    # The holder is unknowable here, so the note must not invent one.
-    assert note is not None
-    assert "an earlier ckdn" in note
-    assert "pid" not in note
+    with run_lock(tmp_path, "twice") as first:
+        assert first is None
+    with run_lock(tmp_path, "twice") as second:
+        assert second is None
 
 
-def test_a_reclaimed_lock_warns_without_naming_a_target(tmp_path: Path) -> None:
+def test_a_lock_never_released_warns_without_naming_a_target(
+    tmp_path: Path,
+) -> None:
     """The warning reports what happened and stops there.
 
-    Only ckdn's own pid was ever written to the lock — never the child's
-    process group — and a pid can be recycled, so the note must not point at
-    anything to kill, and ckdn must kill nothing by itself.
+    Only ckdn's own pid was ever recorded — never the child's process group —
+    and a pid can be recycled, so the note must not point at anything to kill,
+    and ckdn must kill nothing by itself.
     """
-    dead = subprocess.Popen([sys.executable, "-c", ""])
-    dead.wait()
     lock = tmp_path / ".locks" / "z.lock"
     lock.parent.mkdir(parents=True)
-    lock.write_text(str(dead.pid), encoding="utf-8")
+    lock.write_text("ckdn pid 4242", encoding="utf-8")  # killed before releasing
 
     with run_lock(tmp_path, "z") as note:
         assert note is not None
-        assert f"ckdn pid {dead.pid}" in note
+        assert "ckdn pid 4242" in note
         assert "did not exit cleanly" in note
         assert "may still be running" in note
         assert "does not stop them automatically" in note
@@ -322,15 +383,15 @@ def test_a_clean_acquire_yields_no_warning(tmp_path: Path) -> None:
         assert note is None
 
 
-def test_run_lock_reclaims_a_stale_lock_and_releases(tmp_path: Path) -> None:
-    dead = subprocess.Popen([sys.executable, "-c", ""])
-    dead.wait()
+def test_the_lock_records_the_holder_and_empties_it_on_exit(
+    tmp_path: Path,
+) -> None:
     lock = tmp_path / ".locks" / "x.lock"
-    lock.parent.mkdir(parents=True)
-    lock.write_text(str(dead.pid), encoding="utf-8")
     with run_lock(tmp_path, "x"):
-        assert lock.exists()
-    assert not lock.exists(), "the lock must be released on exit"
+        assert lock.read_text(encoding="utf-8").strip() == f"ckdn pid {os.getpid()}"
+    assert lock.read_text(encoding="utf-8") == "", (
+        "an empty record is how the next run knows this one finished"
+    )
 
 
 @pytest.mark.skipif(
@@ -407,12 +468,53 @@ def test_resolve_run_dir_marker_cannot_escape(tmp_path: Path) -> None:
     assert resolve_run_dir(runs) is None
 
 
+def _finished(run_dir: Path) -> Path:
+    (run_dir / DIGEST_NAME).write_text("{}", encoding="utf-8")
+    return run_dir
+
+
 def test_list_and_prune(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     assert list_run_dirs(runs) == []
-    dirs = [create_run_dir(runs, f"c{i}") for i in range(5)]
+    dirs = [_finished(create_run_dir(runs, f"c{i}")) for i in range(5)]
     assert len(list_run_dirs(runs)) == 5
     assert prune(runs, 0) == 0
     removed = prune(runs, 2)
     assert removed == 3
     assert list_run_dirs(runs) == dirs[-2:]
+
+
+def test_prune_never_deletes_a_run_still_being_written(tmp_path: Path) -> None:
+    """Pruning is global; the run lock is per check.
+
+    A fast check retiring old runs would otherwise delete a slow check's
+    directory mid-write — its log vanishes and it never produces a digest.
+    """
+    runs = tmp_path / "runs"
+    old_finished = [_finished(create_run_dir(runs, f"old{i}")) for i in range(3)]
+    in_flight = create_run_dir(runs, "slow")  # no digest yet: still running
+
+    assert prune(runs, 1) == 2
+    assert in_flight.is_dir(), "an unfinished run was pruned out from under it"
+    assert old_finished[-1].is_dir()
+
+
+def test_meta_hash_describes_the_bytes_that_are_on_disk(tmp_path: Path) -> None:
+    """One CRLF used to be enough to make the log look tampered with.
+
+    The hash was taken over `log_text`, and decoding collapses CRLF, so an
+    external `sha256 full.log` disagreed with meta.json for the output of
+    almost any Windows tool.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outcome = execute(
+        [sys.executable, "-c", r"import sys;sys.stdout.buffer.write(b'a\r\nb')"],
+        tmp_path,
+        run_dir,
+        30,
+    )
+    on_disk = (run_dir / LOG_NAME).read_bytes()
+    assert on_disk == b"a\r\nb"
+    assert outcome.log_sha256 == hashlib.sha256(on_disk).hexdigest()
+    assert outcome.log_size == len(on_disk)

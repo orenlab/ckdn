@@ -61,15 +61,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The log now streams straight into `full.log`: no pipe, no deadlock, and
     partial evidence survives an interrupt.
   - The child starts in its own process group (POSIX session /
-    Windows `CREATE_NEW_PROCESS_GROUP`) and the whole tree is terminated on
-    timeout, on `SIGINT`, and on any other exception: `SIGTERM` → grace →
-    `SIGKILL`. Nothing outlives a run.
-  - New `rc=130` plus an additive `interrupted: true` digest field (a reason,
-    like `timed_out`; `ckdn.digest/2` is unchanged and older consumers still
-    just see `error`). Interruption outranks every other signal in reconcile,
-    so partial evidence can never be read as `fail` or `parse_mismatch`.
+    Windows `CREATE_NEW_PROCESS_GROUP`) and the whole **group** is terminated
+    on timeout, on `SIGINT`, on a clean exit, and on any other path:
+    `SIGTERM` → grace → `SIGKILL` for whatever is still there. Escalation
+    watches the group rather than the direct child — a wrapper like `uv` dies
+    on the first `SIGTERM` while the tool it launched ignores it, and waiting
+    on the child alone meant `SIGKILL` was never sent. Two limits are stated
+    in the [status model](docs/status-model.md) rather than promised away: a
+    check that detaches into its own session escapes the group, and `kill -9`
+    on ckdn itself runs no cleanup at all.
+  - Ctrl-C is delivered while a check runs. `Popen.wait(None)` blocks
+    uninterruptibly on Windows, so keypresses were ignored entirely there;
+    the wait now polls. A second Ctrl-C during the grace period, or one during
+    parsing or the evidence write, no longer abandons the run directory
+    without a digest.
+  - Run locks are real kernel file locks (`flock` / `msvcrt.locking`) instead
+    of a pid file. The old protocol could hand one check to two runs through
+    three separate races, could not see a second *thread* of ckdn's own
+    process (which is how the MCP server runs checks), wedged a check
+    permanently on a pid too wide for a C `int`, and turned a failed unlink
+    into a permanent false "did not exit cleanly" note.
+  - New `rc=130` plus an `interrupted: true` field on the digest, the
+    aggregate and `meta.json` — a reason, like `timed_out`. Code that only
+    reads `status` still just sees `error`, but the **schema documents are
+    closed** (`additionalProperties: false`): a validator pinned to the copies
+    exported from 1.2.0 will reject the new field, so re-export them with
+    `ckdn schema` when upgrading. Being cut short outranks every other signal
+    in reconcile — by Ctrl-C *or* by timeout — so partial evidence can never
+    be read as `fail` or `parse_mismatch`.
   - Alias and `--all` sequences stop on interrupt instead of starting the next
-    check; the CLI exits `130` instead of a traceback.
+    check, and the aggregate exits `130` rather than passing through an
+    earlier red member's code; the CLI exits `130` instead of a traceback.
+  - `meta.json`'s `log_sha256`/`log_bytes` describe `full.log` as it sits on
+    disk. They were computed from the decoded text, which collapses CRLF, so
+    an independent `sha256 full.log` disagreed for almost any Windows tool's
+    output and read as tampered evidence.
+  - `ckdn baseline` refuses to record an interrupted or untrusted run instead
+    of overwriting the accepted findings with a partial set — which would
+    announce the whole existing backlog as new on the next gate.
+  - Pruning skips run directories that have no digest yet, so retiring old
+    runs of one check can no longer delete another check's run mid-write.
+  - `AppError` (a refused start, e.g. a lock conflict) is reported as
+    `ckdn: …` with exit `2` on every command. `run --all` and `baseline` let
+    it escape as a traceback with exit `1` — the code that means "this check
+    is red", which CI could not tell apart from a real failure.
   - Runs are serialized per `(runs_dir, check)`: a second concurrent run of the
     same check is refused (stale locks are reclaimed), so a hung run cannot be
     compounded by a retry.

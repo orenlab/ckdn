@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from ckdn import baseline
@@ -21,11 +22,9 @@ from ckdn.app.types import AliasRunResult, AtomicRunResult
 from ckdn.command_policy import CommandPolicyError, validate_command
 from ckdn.config import CheckConfig, Config
 from ckdn.digest import (
-    META_NAME,
     build_alias_aggregate,
     build_digest,
     build_meta,
-    dump_json,
     list_artifacts,
     write_documents,
 )
@@ -34,6 +33,7 @@ from ckdn.parsers.base import ParseContext, Parser, ParseResult
 from ckdn.reconcile import reconcile
 from ckdn.runner import (
     LOG_NAME,
+    RC_INTERRUPTED,
     RC_POLICY,
     RunLockError,
     RunOutcome,
@@ -81,6 +81,19 @@ def _annotate_baseline(
     if known or new:
         digest["baseline"] = {"known": known, "new": new}
     digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
+
+
+def _uninterruptible(write: Callable[[], None]) -> None:
+    """Give the evidence write one more chance if Ctrl-C lands mid-flight.
+
+    This write is the only thing standing between a killed run and an empty
+    run directory — the exact symptom of the incident this path exists to
+    prevent. Losing it to an impatient second keypress would reintroduce it.
+    """
+    try:
+        write()
+    except KeyboardInterrupt:
+        write()
 
 
 def _run_sequence(
@@ -204,6 +217,17 @@ def _run_atomic(
                     max_snippet_lines=cfg.run.max_snippet_lines,
                 )
             )
+        except KeyboardInterrupt:
+            # Ctrl-C after the command finished but before its output was
+            # understood. The evidence below still gets written; it is just
+            # partial, and reconcile is told so.
+            outcome = dataclasses.replace(outcome, interrupted=True)
+            result = ParseResult(
+                parser_ok=False,
+                notes=["run interrupted while parsing the tool output"],
+                evidence_expected=True,
+                include_log_tail=True,
+            )
         except Exception as exc:  # a parser bug must never hide a result
             result = ParseResult(
                 parser_ok=False,
@@ -218,11 +242,13 @@ def _run_atomic(
         result.notes.insert(0, lock_note)
 
     status, reason, include_tail = reconcile(
-        outcome.rc, result, interrupted=outcome.interrupted
+        outcome.rc,
+        result,
+        interrupted=outcome.interrupted,
+        timed_out=outcome.timed_out,
     )
 
     meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
-    (run_dir / META_NAME).write_text(dump_json(meta), encoding="utf-8")
     try:
         # as_posix keeps the digest path separator stable across OSes, so a
         # digest generated on Windows is byte-identical to one on POSIX.
@@ -242,9 +268,13 @@ def _run_atomic(
         artifacts=list_artifacts(run_dir),
     )
     _annotate_baseline(cfg, check.name, status, result, digest)
-    write_documents(run_dir, digest, meta)
-    update_latest(cfg.runs_dir, run_dir)
-    prune(cfg.runs_dir, cfg.run.keep)
+
+    def _persist() -> None:
+        write_documents(run_dir, digest, meta)
+        update_latest(cfg.runs_dir, run_dir)
+        prune(cfg.runs_dir, cfg.run.keep)
+
+    _uninterruptible(_persist)
 
     return AtomicRunResult(
         check=check.name,
@@ -256,7 +286,17 @@ def _run_atomic(
     )
 
 
+def _sequence_interrupted(results: list[AtomicRunResult]) -> bool:
+    return any(item.digest.get("interrupted") for item in results)
+
+
 def _alias_aggregate_exit(results: list[AtomicRunResult]) -> int:
+    # Interruption outranks the members' own codes. Otherwise an early red
+    # member wins the pass-through and the series reports its verdict, hiding
+    # that the rest never ran: `ruff` fails, Ctrl-C stops `pytest`, and the
+    # alias exits 1 as though it had simply found problems.
+    if _sequence_interrupted(results):
+        return RC_INTERRUPTED
     for item in results:
         if item.rc != 0:
             return item.rc if 0 < item.rc <= 255 else 1
@@ -279,6 +319,7 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
     exit_code = _alias_aggregate_exit(results)
     status = "pass" if exit_code == 0 else "fail"
     aggregate = build_alias_aggregate(
+        interrupted=_sequence_interrupted(results),
         alias=alias.name,
         # r.digest["run_dir"] is the member's own relative, posix run dir, so
         # the aggregate and the member digest report identical paths.
@@ -312,6 +353,7 @@ def run_all(cfg: Config, *, fail_fast: bool = False) -> AliasRunResult:
     exit_code = _alias_aggregate_exit(results)
     status = "pass" if exit_code == 0 else "fail"
     aggregate = build_alias_aggregate(
+        interrupted=_sequence_interrupted(results),
         alias="*",
         results=[(r.check, r.status, r.rc, r.digest["run_dir"]) for r in results],
         status=status,

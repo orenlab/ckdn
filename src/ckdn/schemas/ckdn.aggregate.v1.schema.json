@@ -5,40 +5,115 @@
   "description": "Routing document emitted on stdout for an alias run. Lists only members that actually ran; each member also has its own ckdn.digest/2 on disk.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "alias", "status", "rc", "members"],
+  "required": [
+    "schema",
+    "alias",
+    "status",
+    "rc",
+    "members"
+  ],
   "properties": {
-    "schema": {"const": "ckdn.aggregate/1"},
-    "alias": {"type": "string", "minLength": 1},
-    "status": {"enum": ["pass", "fail"]},
-    "rc": {"type": "integer"},
-    "members": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+    "schema": {
+      "const": "ckdn.aggregate/1"
+    },
+    "alias": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "rc": {
+      "type": "integer"
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    },
     "gate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "policy"],
+      "required": [
+        "status",
+        "policy"
+      ],
       "properties": {
-        "status": {"enum": ["pass", "fail", "unavailable"]},
-        "policy": {"type": "string"},
-        "reason": {"type": "string"}
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "unavailable"
+          ]
+        },
+        "policy": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
       }
+    },
+    "interrupted": {
+      "const": true,
+      "description": "Present only when the series was cut short; the members after it were never attempted."
     }
   },
   "$defs": {
     "member": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["check", "status", "rc"],
+      "required": [
+        "check",
+        "status",
+        "rc"
+      ],
       "properties": {
-        "check": {"type": "string", "minLength": 1},
-        "status": {"enum": ["pass", "fail", "error", "parse_mismatch"]},
-        "rc": {"type": "integer"},
-        "run_dir": {"type": "string", "minLength": 1}
+        "check": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "error",
+            "parse_mismatch"
+          ]
+        },
+        "rc": {
+          "type": "integer"
+        },
+        "run_dir": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "allOf": [
         {
-          "if": {"properties": {"status": {"const": "pass"}}},
-          "then": {"not": {"required": ["run_dir"]}},
-          "else": {"required": ["run_dir"]}
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pass"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "run_dir"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "run_dir"
+            ]
+          }
         }
       ]
     }

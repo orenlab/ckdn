@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import hashlib
 import os
 import shlex
 import shutil
@@ -38,6 +39,8 @@ from pathlib import Path
 from typing import IO
 
 LOG_NAME = "full.log"
+#: A run directory without this file has not finished writing itself.
+DIGEST_NAME = "digest.json"
 LATEST_LINK = "latest"
 LATEST_FILE = "LATEST"  # fallback pointer where symlinks are unavailable
 
@@ -48,6 +51,12 @@ RC_INTERRUPTED = 130  # 128 + SIGINT, the conventional Ctrl-C exit code
 
 #: Seconds a terminated process group gets to exit before it is killed.
 TERM_GRACE_SECONDS = 5.0
+#: How often a wait wakes up to notice Ctrl-C or a dead process group.
+POLL_SECONDS = 0.05
+EMPTY_LOG_SHA256 = hashlib.sha256(b"").hexdigest()
+#: `os.kill` raises OverflowError, not OSError, for a pid wider than a C
+#: int -- no caller can be expected to catch that, so refuse it up front.
+_MAX_PID = 2**31 - 1
 
 
 @dataclass(frozen=True)
@@ -63,43 +72,95 @@ class RunOutcome:
     #: Why the process ended, alongside ``timed_out`` -- not a result of its
     #: own. True when the run was cut short by SIGINT.
     interrupted: bool = False
+    #: Taken over the bytes of ``full.log`` itself, so an external
+    #: ``sha256 full.log`` matches. ``log_text`` is a lossy view of them:
+    #: decoding replaces invalid bytes and collapses CRLF, which any Windows
+    #: tool emits.
+    log_sha256: str = EMPTY_LOG_SHA256
+    log_size: int = 0
+
+
+def _group_alive(pgid: int) -> bool:
+    """True while *any* process remains in the group."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, simply not ours to signal
+    return True
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(pgid, sig)
+
+
+def _terminate_group(pgid: int, grace: float) -> None:
+    """SIGTERM the group, wait out the grace, then SIGKILL whatever is left.
+
+    The escalation watches the *group*, never the direct child. A wrapper
+    (``uv``, ``sh``) dies on the first SIGTERM within milliseconds while the
+    tool it launched ignores it -- waiting on the child would come back
+    "finished" and the SIGKILL would never be sent, leaving exactly the
+    orphans this mechanism exists to prevent.
+    """
+    _signal_group(pgid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        if not _group_alive(pgid):
+            return
+        time.sleep(POLL_SECONDS)
+    if _group_alive(pgid):
+        _signal_group(pgid, signal.SIGKILL)
+
+
+def _terminate_tree_posix(proc: subprocess.Popen[bytes], grace: float) -> None:
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError):
+        # The child is already reaped. It led its own session by construction,
+        # so its pid is the group id -- and POSIX reserves that id while the
+        # group still has members, which is precisely the case worth signalling.
+        pgid = proc.pid
+    if pgid == os.getpgid(0):
+        # start_new_session did not take effect: this is ckdn's own group and
+        # signalling it would kill ckdn. Settle for the direct child.
+        with contextlib.suppress(OSError):
+            proc.kill()
+        return
+    if not _group_alive(pgid):
+        return  # nothing left; do not risk signalling a recycled group id
+    _terminate_group(pgid, grace)
+
+
+def _terminate_tree_windows(
+    proc: subprocess.Popen[bytes], grace: float
+) -> None:  # pragma: no cover - Windows CI
+    subprocess.run(
+        ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+        capture_output=True,
+        check=False,
+    )
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and _pid_alive(proc.pid):
+        time.sleep(POLL_SECONDS)
 
 
 def terminate_tree(
     proc: subprocess.Popen[bytes], grace: float = TERM_GRACE_SECONDS
 ) -> None:
-    """Terminate the child's whole process group: TERM, grace, then KILL.
+    """Terminate every process the run started, not just the direct child.
 
-    Safe to call on an already-exited process. Never raises: a tree we cannot
-    signal must not mask the run's real outcome.
+    Safe to call whether or not the child is still alive -- descendants
+    routinely outlive it. Never raises: a tree we cannot signal must not mask
+    the run's real outcome.
     """
-    if proc.poll() is not None:
-        return
-
     if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
-        subprocess.run(
-            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-            capture_output=True,
-            check=False,
-        )
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=grace)
-        return
-
-    try:
-        pgid = os.getpgid(proc.pid)
-    except (ProcessLookupError, PermissionError):
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pgid, signal.SIGTERM)
-    try:
-        proc.wait(timeout=grace)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pgid, signal.SIGKILL)
-    with contextlib.suppress(subprocess.TimeoutExpired):
+        _terminate_tree_windows(proc, grace)
+    else:
+        _terminate_tree_posix(proc, grace)
+    with contextlib.suppress(subprocess.TimeoutExpired, OSError, ValueError):
         proc.wait(timeout=grace)
 
 
@@ -111,8 +172,9 @@ def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
     """Ask the kernel directly; ``os.kill(pid, 0)`` is not usable here.
 
     On Windows a dead pid makes ``os.kill(pid, 0)`` raise a bare ``OSError``
-    (``WinError 87``), indistinguishable from a real error -- treating that as
-    "alive" would make a stale lock permanent.
+    (``WinError 87``), indistinguishable from a real error -- and a pid that
+    does not fit a C int raises ``OverflowError``, which is not an ``OSError``
+    at all.
     """
     if sys.platform != "win32":
         # Unreachable at runtime (guarded by the caller); the check narrows the
@@ -126,6 +188,10 @@ def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
     still_active = 259
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # Without an explicit restype ctypes truncates the handle to a C int,
+    # which silently corrupts 64-bit handles.
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     handle = kernel32.OpenProcess(
         process_query_limited_information, False, wintypes.DWORD(pid)
     )
@@ -143,7 +209,7 @@ def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
 
 
 def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
+    if pid <= 0 or pid > _MAX_PID:
         return False
     if sys.platform == "win32":  # pragma: no cover - Windows CI
         return _pid_alive_windows(pid)
@@ -161,18 +227,46 @@ def _lock_path(runs_dir: Path, check: str) -> Path:
     return runs_dir / ".locks" / f"{safe}.lock"
 
 
-def _stale_lock_note(holder: int | None) -> str:
-    """Say what a reclaimed lock proves -- and nothing beyond it.
+def _try_lock(fd: int) -> bool:
+    """Take an exclusive advisory lock without blocking; ``False`` if held.
 
-    All we know is that a lock existed and its holder is gone. Whether the run
-    was killed, crashed, or the machine rebooted is unknowable here, and so is
-    whether anything it started survived. The recorded pid is ckdn's own, never
-    the child's process group, and a pid can be recycled -- so this names no
-    target to kill and ckdn stops nothing on its own.
+    The kernel arbitrates, so there is no window between testing and taking
+    the lock and no pid left to interpret. The previous protocol (create the
+    file exclusively, then write a pid, then judge that pid's liveness) could
+    hand the same check to two runs three different ways, and could not see a
+    second *thread* of ckdn's own process at all -- which is exactly how the
+    MCP server runs checks.
     """
-    who = f"ckdn pid {holder}" if holder else "an earlier ckdn"
+    if sys.platform == "win32":  # pragma: no cover - Windows CI
+        import msvcrt
+
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _stale_lock_note(holder: str) -> str:
+    """Say what an unreleased lock proves -- and nothing beyond it.
+
+    Holding the lock means no other run has it now; a non-empty file means the
+    run that held it never reached its own cleanup. Whether it was killed,
+    crashed, or the machine rebooted is unknowable here, and so is whether
+    anything it started survived. The recorded pid is ckdn's own, never the
+    child's process group, so this names no target to kill and ckdn stops
+    nothing on its own.
+    """
     return (
-        f"reclaimed a run lock left by {who}: that run did not exit cleanly, so "
+        f"the previous run of this check ({holder}) did not exit cleanly, so "
         "processes it started may still be running. ckdn does not stop them "
         "automatically -- check for leftovers if this run behaves oddly"
     )
@@ -184,40 +278,36 @@ def run_lock(runs_dir: Path, check: str) -> Iterator[str | None]:
 
     Two runs of the same check in one workspace fight over the same tools and
     double the machine load, which is exactly how a hung run gets compounded.
-    A lock left behind by a dead process is reclaimed; yields a note about it
-    when that happens, otherwise ``None``.
+    Yields a note when the previous holder died without releasing, else
+    ``None``.
+
+    The lock is the file *descriptor*, not the file: it is released by the
+    kernel however ckdn dies, so nothing has to be reclaimed and no unlink can
+    fail. The file's contents are only a record of who last held it.
     """
     path = _lock_path(runs_dir, check)
     path.parent.mkdir(parents=True, exist_ok=True)
-    reclaimed: str | None = None
-    for attempt in (1, 2):
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            holder: int | None = None
-            with contextlib.suppress(OSError, ValueError):
-                holder = int(path.read_text(encoding="utf-8").strip() or 0)
-            if holder is not None and holder != os.getpid() and _pid_alive(holder):
-                raise RunLockError(
-                    f"check '{check}' is already running in this workspace "
-                    f"(pid {holder}); wait for it or stop it before retrying"
-                ) from None
-            if attempt == 2:
-                raise RunLockError(
-                    f"could not acquire the run lock for '{check}': {path}"
-                ) from None
-            reclaimed = _stale_lock_note(holder)
-            with contextlib.suppress(OSError):  # stale lock -> reclaim
-                path.unlink()
-        else:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(str(os.getpid()))
-            break
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644)
     try:
-        yield reclaimed
+        if not _try_lock(fd):
+            raise RunLockError(
+                f"check '{check}' is already running in this workspace; "
+                "wait for it or stop it before retrying"
+            )
+        held_by = os.read(fd, 128).decode("utf-8", errors="replace").strip()
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.truncate(fd, 0)
+        os.write(fd, f"ckdn pid {os.getpid()}".encode())
+        try:
+            yield _stale_lock_note(held_by) if held_by else None
+        finally:
+            # Emptying the file is the "released cleanly" marker. The lock
+            # itself goes with the descriptor, so a run that is killed leaves
+            # the record behind and the next one can say so.
+            with contextlib.suppress(OSError):
+                os.truncate(fd, 0)
     finally:
-        with contextlib.suppress(OSError):
-            path.unlink()
+        os.close(fd)
 
 
 def create_run_dir(runs_dir: Path, check: str) -> Path:
@@ -270,12 +360,47 @@ def _spawn(
     )
 
 
+def _wait_interruptibly(proc: subprocess.Popen[bytes], timeout: float | None) -> int:
+    """Wait in short slices so Ctrl-C is actually delivered.
+
+    ``Popen.wait(None)`` blocks in ``WaitForSingleObject(INFINITE)`` on
+    Windows, where a Ctrl-C only becomes a ``KeyboardInterrupt`` between
+    bytecodes -- an unbounded wait there swallows the interrupt entirely and
+    the check cannot be stopped at all. Polling costs one wakeup per 50ms and
+    behaves identically on every OS.
+    """
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        rc = proc.poll()
+        if rc is not None:
+            return rc
+        if deadline is not None and time.monotonic() >= deadline:
+            # `deadline` is set only when a timeout was given, so it is a float.
+            raise subprocess.TimeoutExpired(proc.args, timeout or 0.0)
+        time.sleep(POLL_SECONDS)
+
+
+def _terminate_absorbing_interrupts(proc: subprocess.Popen[bytes]) -> None:
+    """Terminate the tree; an impatient second Ctrl-C must not escape.
+
+    Five seconds of silence invites another keypress, and letting that one
+    through would abandon the run without a digest -- the empty run directory
+    from the original incident.
+    """
+    try:
+        terminate_tree(proc)
+    except KeyboardInterrupt:
+        # Second Ctrl-C: drop the grace period and take what evidence exists.
+        with contextlib.suppress(KeyboardInterrupt):
+            terminate_tree(proc, grace=0.0)
+
+
 def _await_child(proc: subprocess.Popen[bytes], timeout: float | None) -> _Ending:
     """Wait for the child; on timeout or SIGINT kill its whole group."""
     try:
-        return _Ending(rc=proc.wait(timeout=timeout))
+        return _Ending(rc=_wait_interruptibly(proc, timeout))
     except subprocess.TimeoutExpired:
-        terminate_tree(proc)
+        _terminate_absorbing_interrupts(proc)
         return _Ending(
             rc=RC_TIMEOUT,
             timed_out=True,
@@ -284,7 +409,7 @@ def _await_child(proc: subprocess.Popen[bytes], timeout: float | None) -> _Endin
     except KeyboardInterrupt:
         # Swallow deliberately: the run must still produce evidence and a real
         # exit code (130) instead of a bare traceback.
-        terminate_tree(proc)
+        _terminate_absorbing_interrupts(proc)
         return _Ending(
             rc=RC_INTERRUPTED,
             interrupted=True,
@@ -325,15 +450,14 @@ def execute(
             else:
                 ending = _await_child(proc, timeout)
     finally:
-        # Belt and braces: nothing may outlive this call on any path.
-        if proc is not None and proc.poll() is None:
-            terminate_tree(proc)
+        # On every path, including a clean exit: a check that leaves a
+        # background process behind would otherwise keep writing into a log
+        # whose digest is already sealed.
+        if proc is not None:
+            _terminate_absorbing_interrupts(proc)
 
-    log_text = (
-        log_path.read_text(encoding="utf-8", errors="replace")
-        if log_path.exists()
-        else ""
-    )
+    log_bytes = log_path.read_bytes() if log_path.exists() else b""
+    log_text = log_bytes.decode("utf-8", errors="replace")
 
     return RunOutcome(
         run_dir=run_dir,
@@ -345,6 +469,8 @@ def execute(
         timed_out=ending.timed_out,
         exec_note=ending.note,
         interrupted=ending.interrupted,
+        log_sha256=hashlib.sha256(log_bytes).hexdigest(),
+        log_size=len(log_bytes),
     )
 
 
@@ -421,12 +547,19 @@ def list_run_dirs(runs_dir: Path) -> list[Path]:
 
 
 def prune(runs_dir: Path, keep: int) -> int:
-    """Remove oldest run directories beyond ``keep``. Returns count removed."""
+    """Remove oldest *finished* run directories beyond ``keep``.
+
+    A run without a digest has not finished writing itself. Pruning is global
+    while the run lock is per check, so a fast check retiring old runs would
+    otherwise delete a slow check's directory out from under it -- the log
+    vanishes mid-write and the victim never produces a digest at all. Returns
+    the count removed.
+    """
     if keep <= 0:
         return 0
-    dirs = list_run_dirs(runs_dir)
+    finished = [d for d in list_run_dirs(runs_dir) if (d / DIGEST_NAME).exists()]
     removed = 0
-    for old in dirs[: max(0, len(dirs) - keep)]:
+    for old in finished[: max(0, len(finished) - keep)]:
         shutil.rmtree(old, ignore_errors=True)
         removed += 1
     return removed
