@@ -61,7 +61,15 @@ passed to the parser as an option (`fail_under`, `score_fail_under`,
 Runs are serialized per `(runs_dir, check)`: starting a second `ckdn run` of
 the same check in the same workspace is refused while the first is alive,
 rather than doubling the load on the same tools. A lock left by a dead process
-is reclaimed automatically.
+is reclaimed automatically, and the run that reclaims it records a note saying
+the previous run did not exit cleanly and may have left processes behind.
+
+That note is advisory: it describes the *previous* run, so it never changes
+this run's status. ckdn does not stop leftover processes for you. Only its own
+pid is ever recorded — never the child's process group — and a pid can be
+recycled, so there is no target it could act on without risking an unrelated
+process. If a run behaves oddly right after such a note, look for leftovers
+from the previous one.
 
 Optional **`env`** (a table of string values) is overlaid on the subprocess
 environment for that check only — the inherited environment (`PATH`, …) is

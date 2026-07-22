@@ -106,6 +106,27 @@ def test_run_one_and_digest_roundtrip(tmp_path: Path) -> None:
     assert loaded["status"] == "pass"
 
 
+def test_reclaimed_lock_is_reported_without_changing_the_verdict(
+    tmp_path: Path,
+) -> None:
+    """A lock left by a crashed run is evidence about the *previous* run.
+
+    It says nothing about this one, so it lands in notes and the status stays
+    exactly what the exit code earned.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    lock = cfg.runs_dir / ".locks" / "ok.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("999999999", encoding="utf-8")  # a pid that cannot be alive
+
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert result.status == "pass"  # the warning must not downgrade a green run
+    assert result.exit_code == 0
+    assert any("did not exit cleanly" in note for note in result.digest["notes"])
+    assert not lock.exists()
+
+
 def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
     # Digest paths are normalized to forward slashes so a digest is byte-stable
     # across OSes (no-op on POSIX; normalizes backslashes on Windows).

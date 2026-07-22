@@ -131,8 +131,10 @@ def run_one(
         )
 
     try:
-        with run_lock(cfg.runs_dir, check.name):
-            return _run_atomic(cfg, check, check.command, parser, list(extra or ()))
+        with run_lock(cfg.runs_dir, check.name) as lock_note:
+            return _run_atomic(
+                cfg, check, check.command, parser, list(extra or ()), lock_note
+            )
     except RunLockError as exc:
         raise AppError(str(exc)) from exc
 
@@ -143,6 +145,7 @@ def _run_atomic(
     command: str,
     parser: Parser,
     extra: list[str],
+    lock_note: str | None = None,
 ) -> AtomicRunResult:
     """Execute one already-validated atomic check while holding its lock."""
     run_dir = create_run_dir(cfg.runs_dir, check.name)
@@ -208,6 +211,11 @@ def _run_atomic(
             )
         if outcome.exec_note:
             result.notes.insert(0, outcome.exec_note)
+
+    if lock_note:
+        # Advisory only: a reclaimed lock says nothing about *this* run's
+        # outcome, so it is recorded as evidence and never touches the status.
+        result.notes.insert(0, lock_note)
 
     status, reason, include_tail = reconcile(
         outcome.rc, result, interrupted=outcome.interrupted

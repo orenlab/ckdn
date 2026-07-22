@@ -73,6 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Runs are serialized per `(runs_dir, check)`: a second concurrent run of the
     same check is refused (stale locks are reclaimed), so a hung run cannot be
     compounded by a retry.
+  - Reclaiming a stale lock says so in the run's notes: the previous run did
+    not exit cleanly and may have left processes behind. A run killed with
+    `SIGKILL` executes no cleanup, so this is the only honest signal left. It
+    is advisory — it describes the *previous* run and never changes this run's
+    status — and ckdn stops nothing on its own: only its own pid is ever
+    recorded (never the child's process group), and a recycled pid would make
+    an automatic kill land on an unrelated process.
 
 ## [1.2.0] - 2026-07-21
 

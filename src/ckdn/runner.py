@@ -161,16 +161,35 @@ def _lock_path(runs_dir: Path, check: str) -> Path:
     return runs_dir / ".locks" / f"{safe}.lock"
 
 
+def _stale_lock_note(holder: int | None) -> str:
+    """Say what a reclaimed lock proves -- and nothing beyond it.
+
+    All we know is that a lock existed and its holder is gone. Whether the run
+    was killed, crashed, or the machine rebooted is unknowable here, and so is
+    whether anything it started survived. The recorded pid is ckdn's own, never
+    the child's process group, and a pid can be recycled -- so this names no
+    target to kill and ckdn stops nothing on its own.
+    """
+    who = f"ckdn pid {holder}" if holder else "an earlier ckdn"
+    return (
+        f"reclaimed a run lock left by {who}: that run did not exit cleanly, so "
+        "processes it started may still be running. ckdn does not stop them "
+        "automatically -- check for leftovers if this run behaves oddly"
+    )
+
+
 @contextlib.contextmanager
-def run_lock(runs_dir: Path, check: str) -> Iterator[None]:
+def run_lock(runs_dir: Path, check: str) -> Iterator[str | None]:
     """Hold an exclusive lock for ``check``; refuse a second concurrent run.
 
     Two runs of the same check in one workspace fight over the same tools and
     double the machine load, which is exactly how a hung run gets compounded.
-    A lock left behind by a dead process is reclaimed.
+    A lock left behind by a dead process is reclaimed; yields a note about it
+    when that happens, otherwise ``None``.
     """
     path = _lock_path(runs_dir, check)
     path.parent.mkdir(parents=True, exist_ok=True)
+    reclaimed: str | None = None
     for attempt in (1, 2):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -187,6 +206,7 @@ def run_lock(runs_dir: Path, check: str) -> Iterator[None]:
                 raise RunLockError(
                     f"could not acquire the run lock for '{check}': {path}"
                 ) from None
+            reclaimed = _stale_lock_note(holder)
             with contextlib.suppress(OSError):  # stale lock -> reclaim
                 path.unlink()
         else:
@@ -194,7 +214,7 @@ def run_lock(runs_dir: Path, check: str) -> Iterator[None]:
                 fh.write(str(os.getpid()))
             break
     try:
-        yield
+        yield reclaimed
     finally:
         with contextlib.suppress(OSError):
             path.unlink()

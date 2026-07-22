@@ -285,9 +285,41 @@ def test_a_zero_byte_lock_is_reclaimed(tmp_path: Path) -> None:
     lock = tmp_path / ".locks" / "y.lock"
     lock.parent.mkdir(parents=True)
     lock.write_text("", encoding="utf-8")
-    with run_lock(tmp_path, "y"):
+    with run_lock(tmp_path, "y") as note:
         assert lock.read_text(encoding="utf-8").strip() == str(os.getpid())
     assert not lock.exists()
+    # The holder is unknowable here, so the note must not invent one.
+    assert note is not None
+    assert "an earlier ckdn" in note
+    assert "pid" not in note
+
+
+def test_a_reclaimed_lock_warns_without_naming_a_target(tmp_path: Path) -> None:
+    """The warning reports what happened and stops there.
+
+    Only ckdn's own pid was ever written to the lock — never the child's
+    process group — and a pid can be recycled, so the note must not point at
+    anything to kill, and ckdn must kill nothing by itself.
+    """
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    lock = tmp_path / ".locks" / "z.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(str(dead.pid), encoding="utf-8")
+
+    with run_lock(tmp_path, "z") as note:
+        assert note is not None
+        assert f"ckdn pid {dead.pid}" in note
+        assert "did not exit cleanly" in note
+        assert "may still be running" in note
+        assert "does not stop them automatically" in note
+        # No promise about a process group, and nothing framed as a kill target.
+        assert "pgid" not in note.lower() and "process group" not in note.lower()
+
+
+def test_a_clean_acquire_yields_no_warning(tmp_path: Path) -> None:
+    with run_lock(tmp_path, "quiet") as note:
+        assert note is None
 
 
 def test_run_lock_reclaims_a_stale_lock_and_releases(tmp_path: Path) -> None:
