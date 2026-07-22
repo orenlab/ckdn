@@ -103,6 +103,9 @@ def build_digest(
         digest["status_reason"] = reason
     if outcome.timed_out:
         digest["timed_out"] = True
+    if outcome.interrupted:
+        # Why the process ended, like timed_out -- not a result of its own.
+        digest["interrupted"] = True
 
     summary = prune_summary(result.summary)
     if isinstance(summary, dict) and summary:

@@ -20,7 +20,9 @@ from ckdn.runner import RunOutcome
 RUN_DIR_REL = ".agent-runs/20260101T000000Z-x"
 
 
-def make_outcome(rc: int, *, timed_out: bool = False) -> RunOutcome:
+def make_outcome(
+    rc: int, *, timed_out: bool = False, interrupted: bool = False
+) -> RunOutcome:
     return RunOutcome(
         run_dir=Path(RUN_DIR_REL),
         tokens=["tool", "--flag"],
@@ -30,6 +32,7 @@ def make_outcome(rc: int, *, timed_out: bool = False) -> RunOutcome:
         duration_s=0.0,
         timed_out=timed_out,
         exec_note=None,
+        interrupted=interrupted,
     )
 
 
@@ -48,11 +51,12 @@ def make_digest(
     result: ParseResult,
     *,
     timed_out: bool = False,
+    interrupted: bool = False,
     top: int = 20,
     artifacts: list[str] | None = None,
 ) -> dict[str, Any]:
-    outcome = make_outcome(rc, timed_out=timed_out)
-    status, reason, include_tail = reconcile(rc, result)
+    outcome = make_outcome(rc, timed_out=timed_out, interrupted=interrupted)
+    status, reason, include_tail = reconcile(rc, result, interrupted=interrupted)
     return build_digest(
         check="pytest",
         status=status,

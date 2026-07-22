@@ -51,6 +51,18 @@ seconds (a timeout yields `rc=124` and a non-green status). Any other key is
 passed to the parser as an option (`fail_under`, `score_fail_under`,
 `fail_levels`, …).
 
+!!! warning "Set a `timeout` on long checks"
+
+    `timeout` is optional and unset means *wait indefinitely*. A tool that
+    hangs then hangs the check. ckdn will not leak the process tree — it is
+    terminated on interrupt — but only a `timeout` bounds an unattended run,
+    so set one on anything that talks to the network or runs a full suite.
+
+Runs are serialized per `(runs_dir, check)`: starting a second `ckdn run` of
+the same check in the same workspace is refused while the first is alive,
+rather than doubling the load on the same tools. A lock left by a dead process
+is reclaimed automatically.
+
 Optional **`env`** (a table of string values) is overlaid on the subprocess
 environment for that check only — the inherited environment (`PATH`, …) is
 preserved. `{run_dir}` is substituted in env values, so a tool can be pointed

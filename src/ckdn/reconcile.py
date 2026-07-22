@@ -23,8 +23,23 @@ from ckdn.parsers.base import ParseResult
 STATUSES = ("pass", "fail", "error", "parse_mismatch")
 
 
-def reconcile(rc: int, result: ParseResult) -> tuple[str, str, bool]:
-    """Return ``(status, reason, include_log_tail)``."""
+def reconcile(
+    rc: int, result: ParseResult, *, interrupted: bool = False
+) -> tuple[str, str, bool]:
+    """Return ``(status, reason, include_log_tail)``.
+
+    ``interrupted`` wins over everything: a run cut short by SIGINT produced
+    partial evidence, and partial evidence must never be read as a verdict.
+    A half-written JUnit file does not make the run ``fail``, and a missing
+    one does not make it ``parse_mismatch`` -- it is an ``error``.
+    """
+    if interrupted:
+        return (
+            "error",
+            "run interrupted before completion; evidence is partial",
+            True,
+        )
+
     if not result.parser_ok:
         if rc == 0:
             return (

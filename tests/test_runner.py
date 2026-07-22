@@ -8,6 +8,7 @@ import datetime as dt
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -16,14 +17,17 @@ from ckdn.runner import (
     LATEST_FILE,
     LATEST_LINK,
     LOG_NAME,
+    RC_INTERRUPTED,
     RC_NOT_FOUND,
     RC_TIMEOUT,
+    RunLockError,
     build_tokens,
     create_run_dir,
     execute,
     list_run_dirs,
     prune,
     resolve_run_dir,
+    run_lock,
     update_latest,
 )
 
@@ -111,11 +115,122 @@ def test_execute_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     def _boom(*_a: object, **_k: object) -> object:
         raise OSError("permission denied")
 
-    monkeypatch.setattr(subprocess, "run", _boom)
+    monkeypatch.setattr(subprocess, "Popen", _boom)
     outcome = execute(["true"], tmp_path, run_dir, None)
     assert outcome.rc == RC_NOT_FOUND
     assert outcome.exec_note is not None
     assert "failed to start" in outcome.exec_note
+
+
+# --- process lifecycle (regression: the 2026-07 machine-hang incident) -----
+
+# A child that spawns a grandchild and then sleeps. The grandchild inherits
+# the child's stdout: with a pipe, draining it blocks until *every* holder
+# exits, so killing only the direct child deadlocked the parent forever.
+_SPAWNS_GRANDCHILD = (
+    "import subprocess,sys,time;"
+    "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']);"
+    "sys.stdout.write(str(p.pid));sys.stdout.flush();"
+    "time.sleep(30)"
+)
+
+
+def _wait_dead(pid: int, limit: float = 10.0) -> bool:
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        time.sleep(0.05)
+    return False
+
+
+def test_timeout_kills_the_whole_tree_and_never_hangs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    start = time.monotonic()
+    outcome = execute(
+        [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, run_dir, timeout=1.0
+    )
+    elapsed = time.monotonic() - start
+
+    assert outcome.timed_out is True
+    assert outcome.rc == RC_TIMEOUT
+    # The bug: this call used to block forever on the inherited pipe.
+    assert elapsed < 20, "execute() must not wait on orphaned descendants"
+    # Evidence survives the timeout because the log streams to disk.
+    grandchild = int(outcome.log_text.strip())
+    assert _wait_dead(grandchild), "grandchild outlived the terminated group"
+
+
+def test_interrupt_terminates_tree_records_evidence_and_rc_130(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    real_wait = subprocess.Popen.wait
+    seen: list[int] = []
+
+    def _fake_wait(self: subprocess.Popen[bytes], timeout: float | None = None) -> int:
+        seen.append(1)
+        if len(seen) == 1:  # first wait: the user pressed Ctrl-C
+            time.sleep(1.0)  # let the child emit its grandchild's pid first
+            raise KeyboardInterrupt
+        return int(real_wait(self, timeout=timeout))
+
+    monkeypatch.setattr(subprocess.Popen, "wait", _fake_wait)
+    outcome = execute(
+        [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, run_dir, None
+    )
+
+    assert outcome.interrupted is True and outcome.timed_out is False
+    assert outcome.rc == RC_INTERRUPTED == 130
+    assert "interrupted by SIGINT" in (outcome.exec_note or "")
+    assert (run_dir / LOG_NAME).exists(), "evidence must exist after an interrupt"
+    grandchild = int(outcome.log_text.strip())
+    assert _wait_dead(grandchild), "grandchild outlived the interrupt"
+
+
+def test_run_lock_refuses_a_second_live_run(tmp_path: Path) -> None:
+    holder = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
+    try:
+        lock = tmp_path / ".locks" / "pytest.lock"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(str(holder.pid), encoding="utf-8")
+        with (
+            pytest.raises(RunLockError, match="already running"),
+            run_lock(tmp_path, "pytest"),
+        ):
+            pass
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_lock_dir_is_never_mistaken_for_a_run(tmp_path: Path) -> None:
+    """`.locks` lives inside runs_dir; listing/pruning must ignore it."""
+    runs = tmp_path / "runs"
+    real = create_run_dir(runs, "a")
+    with run_lock(runs, "a"):
+        assert (runs / ".locks").is_dir()
+        assert list_run_dirs(runs) == [real]
+        assert resolve_run_dir(runs, ".locks") is None
+        prune(runs, keep=1)
+        assert (runs / ".locks").is_dir(), "prune must not delete bookkeeping"
+
+
+def test_run_lock_reclaims_a_stale_lock_and_releases(tmp_path: Path) -> None:
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    lock = tmp_path / ".locks" / "x.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(str(dead.pid), encoding="utf-8")
+    with run_lock(tmp_path, "x"):
+        assert lock.exists()
+    assert not lock.exists(), "the lock must be released on exit"
 
 
 @pytest.mark.skipif(

@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable
 from typing import Any
 
 from ckdn import baseline
 from ckdn.app.errors import (
     AliasExtraArgsError,
+    AppError,
     NotAliasError,
     NotAtomicError,
     UnknownCheckError,
@@ -28,16 +30,18 @@ from ckdn.digest import (
     write_documents,
 )
 from ckdn.parsers import available_parsers, get_parser
-from ckdn.parsers.base import ParseContext, ParseResult
+from ckdn.parsers.base import ParseContext, Parser, ParseResult
 from ckdn.reconcile import reconcile
 from ckdn.runner import (
     LOG_NAME,
     RC_POLICY,
+    RunLockError,
     RunOutcome,
     build_tokens,
     create_run_dir,
     execute,
     prune,
+    run_lock,
     update_latest,
 )
 
@@ -79,6 +83,23 @@ def _annotate_baseline(
     digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
 
 
+def _run_sequence(
+    cfg: Config, checks: Iterable[CheckConfig], *, fail_fast: bool
+) -> list[AtomicRunResult]:
+    """Run checks in order, stopping early when the sequence must not continue.
+
+    A run cut short by Ctrl-C always ends the sequence; ``fail_fast`` also
+    stops at the first non-green member.
+    """
+    results: list[AtomicRunResult] = []
+    for check in checks:
+        outcome = run_one(cfg, check, extra=[])
+        results.append(outcome)
+        if outcome.digest.get("interrupted") or (fail_fast and outcome.exit_code != 0):
+            break
+    return results
+
+
 def _attach_aggregate_gate(
     aggregate: dict[str, Any], results: list[AtomicRunResult]
 ) -> None:
@@ -94,7 +115,11 @@ def run_one(
     *,
     extra: list[str] | None = None,
 ) -> AtomicRunResult:
-    """Run one atomic check and persist digest/meta under the run directory."""
+    """Run one atomic check and persist digest/meta under the run directory.
+
+    Serialized per ``(runs_dir, check)``: a second concurrent run of the same
+    check is refused instead of doubling the load on the same tools.
+    """
     if check.is_alias or check.command is None or check.parser is None:
         raise NotAtomicError(f"[check.{check.name}] is not an atomic check")
 
@@ -105,13 +130,28 @@ def run_one(
             "available: " + ", ".join(available_parsers())
         )
 
+    try:
+        with run_lock(cfg.runs_dir, check.name):
+            return _run_atomic(cfg, check, check.command, parser, list(extra or ()))
+    except RunLockError as exc:
+        raise AppError(str(exc)) from exc
+
+
+def _run_atomic(
+    cfg: Config,
+    check: CheckConfig,
+    command: str,
+    parser: Parser,
+    extra: list[str],
+) -> AtomicRunResult:
+    """Execute one already-validated atomic check while holding its lock."""
     run_dir = create_run_dir(cfg.runs_dir, check.name)
-    tokens = build_tokens(check.command, run_dir, list(extra or ()))
+    tokens = build_tokens(command, run_dir, extra)
     policy_blocked = False
     try:
         validate_command(
-            check.command,
-            list(extra or ()),
+            command,
+            extra,
             cwd=cfg.cwd,
             policy=cfg.run.command_policy,
             allowlist_prefixes=cfg.run.command_allowlist,
@@ -169,9 +209,11 @@ def run_one(
         if outcome.exec_note:
             result.notes.insert(0, outcome.exec_note)
 
-    status, reason, include_tail = reconcile(outcome.rc, result)
+    status, reason, include_tail = reconcile(
+        outcome.rc, result, interrupted=outcome.interrupted
+    )
 
-    meta = build_meta(check=check.name, parser=check.parser, outcome=outcome)
+    meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
     (run_dir / META_NAME).write_text(dump_json(meta), encoding="utf-8")
     try:
         # as_posix keeps the digest path separator stable across OSes, so a
@@ -220,13 +262,11 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
     if not alias.is_alias or alias.members is None:
         raise NotAliasError(f"[check.{alias.name}] is not an alias")
 
-    results: list[AtomicRunResult] = []
-    for member_name in alias.members:
-        member = cfg.checks[member_name]
-        outcome = run_one(cfg, member, extra=[])
-        results.append(outcome)
-        if alias.fail_fast and outcome.exit_code != 0:
-            break
+    results = _run_sequence(
+        cfg,
+        (cfg.checks[name] for name in alias.members),
+        fail_fast=alias.fail_fast,
+    )
 
     exit_code = _alias_aggregate_exit(results)
     status = "pass" if exit_code == 0 else "fail"
@@ -255,14 +295,11 @@ def run_all(cfg: Config, *, fail_fast: bool = False) -> AliasRunResult:
     Defaults to running every check; ``fail_fast`` stops at the first non-green
     one. The aggregate uses ``alias = "*"`` to denote "all atomic checks".
     """
-    results: list[AtomicRunResult] = []
-    for check in cfg.checks.values():
-        if check.is_alias:
-            continue
-        outcome = run_one(cfg, check, extra=[])
-        results.append(outcome)
-        if fail_fast and outcome.exit_code != 0:
-            break
+    results = _run_sequence(
+        cfg,
+        (check for check in cfg.checks.values() if not check.is_alias),
+        fail_fast=fail_fast,
+    )
 
     exit_code = _alias_aggregate_exit(results)
     status = "pass" if exit_code == 0 else "fail"

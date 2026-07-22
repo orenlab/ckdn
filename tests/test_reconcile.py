@@ -10,6 +10,26 @@ def _finding() -> Finding:
     return Finding(id="tests.test_x::test_y", kind="test_failure", message="boom")
 
 
+def test_interrupted_outranks_every_other_signal() -> None:
+    """Partial evidence from a cut-short run is never a verdict."""
+    # a half-written report must not read as `fail`
+    status, reason, tail = reconcile(
+        1, ParseResult(findings=[_finding()]), interrupted=True
+    )
+    assert status == "error" and "interrupted" in reason and tail is True
+    # nor as `parse_mismatch` when the parser could not read the partial file
+    assert reconcile(0, ParseResult(parser_ok=False), interrupted=True)[0] == "error"
+    # nor as a gate failure
+    assert (
+        reconcile(0, ParseResult(gate_failures=["coverage too low"]), interrupted=True)[
+            0
+        ]
+        == "error"
+    )
+    # and it is never green
+    assert reconcile(0, ParseResult(), interrupted=True)[0] == "error"
+
+
 def test_green_requires_rc_zero_and_clean_parse() -> None:
     status, _, tail = reconcile(0, ParseResult())
     assert status == "pass"

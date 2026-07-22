@@ -21,7 +21,7 @@ from jsonschema.protocols import Validator
 from ckdn import AGGREGATE_SCHEMA, DIGEST_SCHEMA, META_SCHEMA, cli
 from ckdn.digest import build_alias_aggregate, build_meta
 from ckdn.parsers.base import ParseResult
-from ckdn.runner import RC_TIMEOUT
+from ckdn.runner import RC_INTERRUPTED, RC_TIMEOUT
 from ckdn.schema import SCHEMA_FILES, load_schema, schema_ids
 
 
@@ -86,6 +86,12 @@ def test_all_digest_variants_validate() -> None:
         "timed_out": make_digest(
             RC_TIMEOUT, ParseResult(parser_ok=True), timed_out=True
         ),
+        # cut short by SIGINT: partial evidence, never a verdict
+        "interrupted": make_digest(
+            RC_INTERRUPTED,
+            ParseResult(parser_ok=True, findings=[make_finding(1)]),
+            interrupted=True,
+        ),
         "truncated": make_digest(
             1,
             ParseResult(parser_ok=True, findings=[make_finding(i) for i in range(3)]),
@@ -100,6 +106,11 @@ def test_all_digest_variants_validate() -> None:
     assert seen_status == {"pass", "fail", "error", "parse_mismatch"}
     assert variants["timed_out"]["timed_out"] is True
     assert variants["truncated"]["findings_truncated"] == 2
+    # interruption is a reason field like timed_out, and it wins the status
+    interrupted = variants["interrupted"]
+    assert interrupted["interrupted"] is True
+    assert interrupted["status"] == "error" and interrupted["rc"] == RC_INTERRUPTED
+    assert "timed_out" not in interrupted
 
 
 # --- aggregate variants ----------------------------------------------------

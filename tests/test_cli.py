@@ -182,7 +182,12 @@ def test_exec_note_prepended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     rc = cli.main(["run", "--config", str(cfg), "ok", "--quiet"])
     assert rc == 127
     runs = tmp_path / "runs"
-    latest = next(p for p in runs.iterdir() if p.is_dir() and not p.is_symlink())
+    # `.locks` also lives under runs_dir; a run dir is never dot-prefixed.
+    latest = next(
+        p
+        for p in runs.iterdir()
+        if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+    )
     doc = json.loads((latest / DIGEST_NAME).read_text(encoding="utf-8"))
     assert doc["notes"][0].startswith("command not found")
 

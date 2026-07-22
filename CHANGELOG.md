@@ -9,8 +9,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [1.3.0] - 2026-07-22
 
 ### Added
@@ -50,6 +48,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subprocess execution stays covered by `test_runner` via `sys.executable`).
   Only the real-symlink test remains POSIX-only (Windows symlinks need
   privilege; the `LATEST` marker fallback is covered separately)
+
+### Fixed
+
+- **Critical: a hung check could hang the whole machine.** `execute()` read the
+  child's output through a pipe, whose write end every descendant inherits, so
+  draining it blocked until *all* of them exited. Killing the direct child
+  (`uv`) left `pytest` and its workers holding the pipe, and ckdn waited on EOF
+  forever while the orphans kept burning CPU. Interrupting produced an empty
+  run directory — no log, no meta, no digest — because artifacts were only
+  written after the subprocess returned.
+  - The log now streams straight into `full.log`: no pipe, no deadlock, and
+    partial evidence survives an interrupt.
+  - The child starts in its own process group (POSIX session /
+    Windows `CREATE_NEW_PROCESS_GROUP`) and the whole tree is terminated on
+    timeout, on `SIGINT`, and on any other exception: `SIGTERM` → grace →
+    `SIGKILL`. Nothing outlives a run.
+  - New `rc=130` plus an additive `interrupted: true` digest field (a reason,
+    like `timed_out`; `ckdn.digest/2` is unchanged and older consumers still
+    just see `error`). Interruption outranks every other signal in reconcile,
+    so partial evidence can never be read as `fail` or `parse_mismatch`.
+  - Alias and `--all` sequences stop on interrupt instead of starting the next
+    check; the CLI exits `130` instead of a traceback.
+  - Runs are serialized per `(runs_dir, check)`: a second concurrent run of the
+    same check is refused (stale locks are reclaimed), so a hung run cannot be
+    compounded by a retry.
 
 ## [1.2.0] - 2026-07-21
 
