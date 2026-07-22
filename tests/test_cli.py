@@ -49,6 +49,7 @@ def stub_execute(monkeypatch: pytest.MonkeyPatch) -> None:
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         return _outcome(run_dir, 0)
 
@@ -91,6 +92,7 @@ boom
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         return RunOutcome(
             run_dir=run_dir,
@@ -148,6 +150,7 @@ def test_parser_crash_becomes_parse_mismatch(
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         return _outcome(run_dir, 0)
 
@@ -171,6 +174,7 @@ def test_exec_note_prepended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         return _outcome(run_dir, 127, note="command not found: x")
 
@@ -253,6 +257,7 @@ def test_main_extra_after_dashdash(
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         seen["tokens"] = tokens
         return _outcome(run_dir, 0)
@@ -292,6 +297,7 @@ def test_main_run_cwd_separate_from_config(
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         assert cwd == worktree.resolve()
         (run_dir / "junit.xml").write_text(JUNIT_ALL_PASS, encoding="utf-8")
@@ -338,3 +344,49 @@ def test_run_one_rejects_alias_as_atomic(tmp_path: Path) -> None:
     cfg = load_config(cfg_path)
     alias = cfg.checks["g"]
     assert isinstance(cli.run_one(cfg, alias, extra=[], quiet=True), int)
+
+
+def test_run_all_emits_aggregate(
+    tmp_path: Path, stub_execute: None, capsys: Any
+) -> None:
+    cfg = _cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n'
+        '[check.b]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["a"]\n',
+    )
+    assert cli.main(["run", "--all", "--config", str(cfg)]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["schema"] == "ckdn.aggregate/1" and doc["alias"] == "*"
+    assert [m["check"] for m in doc["members"]] == ["a", "b"]
+
+
+def test_run_all_rejects_check_and_missing_target(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    assert cli.main(["run", "--all", "a", "--config", str(cfg)]) == 2
+    assert cli.main(["run", "--config", str(cfg)]) == 2
+
+
+def test_checks_json(tmp_path: Path, capsys: Any) -> None:
+    cfg = _cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\ntimeout = 5\n'
+        '[check.g]\nmembers = ["a"]\n',
+    )
+    assert cli.main(["checks", "--json", "--config", str(cfg)]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert set(doc) == {"checks"}
+    by_name = {c["name"]: c for c in doc["checks"]}
+    assert by_name["a"]["kind"] == "atomic" and by_name["a"]["timeout"] == 5.0
+    assert by_name["g"]["kind"] == "alias" and by_name["g"]["members"] == ["a"]
+
+
+def test_list_json(tmp_path: Path, stub_execute: None, capsys: Any) -> None:
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    cli.main(["run", "--config", str(cfg), "ok", "--quiet"])
+    capsys.readouterr()
+    assert cli.main(["list", "--json", "--config", str(cfg)]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert set(doc) == {"runs"}
+    last = doc["runs"][-1]
+    assert last["check"] == "ok" and last["status"] == "pass"

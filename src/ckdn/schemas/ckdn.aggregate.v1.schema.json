@@ -11,7 +11,17 @@
     "alias": {"type": "string", "minLength": 1},
     "status": {"enum": ["pass", "fail"]},
     "rc": {"type": "integer"},
-    "members": {"type": "array", "items": {"$ref": "#/$defs/member"}}
+    "members": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "policy"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "unavailable"]},
+        "policy": {"type": "string"},
+        "reason": {"type": "string"}
+      }
+    }
   },
   "$defs": {
     "member": {

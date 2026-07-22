@@ -199,6 +199,7 @@ class RunSettings:
     log_tail_lines: int = 40
     command_policy: CommandPolicy = "workspace"
     command_allowlist: tuple[str, ...] | None = None
+    baseline: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,7 @@ class CheckConfig:
     parser: str | None = None
     timeout: float | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    env: dict[str, str] = field(default_factory=dict)
     members: tuple[str, ...] | None = None
     fail_fast: bool = True
 
@@ -237,8 +239,16 @@ class Config:
         d = self.run.runs_dir
         return d if d.is_absolute() else self.cwd / d
 
+    @property
+    def baseline_path(self) -> Path | None:
+        """Resolved baseline file path, or ``None`` when not configured."""
+        b = self.run.baseline
+        if b is None:
+            return None
+        return b if b.is_absolute() else self.cwd / b
 
-_ATOMIC_RESERVED = frozenset({"command", "parser", "timeout"})
+
+_ATOMIC_RESERVED = frozenset({"command", "parser", "timeout", "env"})
 _ALIAS_RESERVED = frozenset({"members", "fail_fast"})
 
 
@@ -322,6 +332,7 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
         raise ConfigError(f"[check.{name}] members is only valid on aliases")
     timeout_raw = raw.get("timeout")
     timeout = float(timeout_raw) if timeout_raw is not None else None
+    env = _parse_check_env(name, raw.get("env"))
     options = {k: v for k, v in raw.items() if k not in _ATOMIC_RESERVED}
     return CheckConfig(
         name=name,
@@ -329,7 +340,22 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
         parser=str(parser),
         timeout=timeout,
         options=options,
+        env=env,
     )
+
+
+def _parse_check_env(name: str, raw: Any) -> dict[str, str]:
+    """Parse an optional ``[check.<name>.env]`` table of string values."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[check.{name}].env must be a table of string values")
+    env: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ConfigError(f"[check.{name}].env.{key} must be a string")
+        env[str(key)] = value
+    return env
 
 
 def _validate_aliases(checks: dict[str, CheckConfig]) -> None:
@@ -392,6 +418,7 @@ def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
         log_tail_lines=int(run_raw.get("log_tail_lines", 40)),
         command_policy=_parse_command_policy(run_raw),
         command_allowlist=_parse_command_allowlist(run_raw),
+        baseline=(Path(str(run_raw["baseline"])) if run_raw.get("baseline") else None),
     )
 
     checks_raw = data.get("check", {})

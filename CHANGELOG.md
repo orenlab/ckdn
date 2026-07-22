@@ -11,6 +11,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-22
+
+### Added
+
+- `ckdn doctor`: static pre-flight diagnostics over `ckdn.toml` before any
+  subprocess — flags executables missing from `PATH` (error) and commands that
+  do not match their parser (warning: a file-based parser whose command never
+  writes its report, or a missing `--output json` / `--outputjson` / `--check`
+  flag). Exit `1` on errors (or on warnings with `--strict`), so it drops into
+  CI as a config gate
+- `--json` on `ckdn list` and `ckdn checks`: machine-readable
+  `{"runs": [...]}` / `{"checks": [...]}` (the same shape the MCP `list_runs`
+  / `list_checks` tools return)
+- Per-check `env` table: overlays the subprocess environment for one check
+  (inherited `PATH` etc. preserved), with `{run_dir}` substitution in values;
+  never recorded in `meta.json`
+- `ckdn run --all [--fail-fast]`: run every atomic check in config order and
+  emit one `ckdn.aggregate/1` (`alias = "*"`); a single "verify the project"
+  step for CI
+- `ckdn annotate [ref] [--format github|sarif]`: project a stored digest's
+  findings to GitHub Actions annotations (inline on the PR) or a SARIF 2.1.0
+  document (code scanning) — a pure projection that never changes run status
+- **Finding baselines** — gate CI on *new* findings without fixing the whole
+  backlog. `[run].baseline` + `ckdn baseline <check>` record accepted findings
+  (line/column-drift-tolerant fingerprints); the digest gains `baseline`
+  (`known`/`new`) and a `gate` (`pass`/`fail`/`unavailable`) reported
+  **separately** from execution status. `ckdn run --gate` makes the exit
+  reflect the gate for CI. Baseline never changes execution truth and never
+  accepts an untrusted failure (`error`/`parse_mismatch`/crash → `unavailable`)
+
+### Changed
+
+- Full Windows: the test suite now runs end-to-end on Windows. The command
+  and artifact path-escape checks already fire cross-platform (pathlib anchors
+  a rooted `/etc/...` path to the drive root, outside the workspace), so those
+  tests no longer skip; the app/MCP tests isolate `execute` on every OS (real
+  subprocess execution stays covered by `test_runner` via `sys.executable`).
+  Only the real-symlink test remains POSIX-only (Windows symlinks need
+  privilege; the `LATEST` marker fallback is covered separately)
+
 ## [1.2.0] - 2026-07-21
 
 ### Added
@@ -107,7 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/orenlab/ckdn/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/orenlab/ckdn/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/orenlab/ckdn/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/orenlab/ckdn/compare/v1.0.0...v1.1.0

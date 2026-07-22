@@ -24,7 +24,13 @@ from ckdn.app.queries import (
     list_checks,
     list_runs,
 )
-from ckdn.app.run import exit_from_outcome, run_alias, run_check, run_one
+from ckdn.app.run import (
+    exit_from_outcome,
+    run_alias,
+    run_all,
+    run_check,
+    run_one,
+)
 from ckdn.app.types import AliasRunResult, AtomicRunResult
 
 __all__ = [
@@ -48,6 +54,7 @@ __all__ = [
     "list_checks",
     "list_runs",
     "run_alias",
+    "run_all",
     "run_check",
     "run_one",
 ]

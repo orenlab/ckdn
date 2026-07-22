@@ -11,6 +11,7 @@ without producing a run directory -- a digest must exist for every attempt.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import shlex
 import shutil
 import subprocess
@@ -62,12 +63,16 @@ def execute(
     cwd: Path,
     run_dir: Path,
     timeout: float | None,
+    env: dict[str, str] | None = None,
 ) -> RunOutcome:
     started_at = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
     t0 = time.monotonic()
     timed_out = False
     note: str | None = None
     raw: bytes = b""
+    # Overlay per-check env on the inherited environment (keeps PATH etc.);
+    # None means "inherit unchanged".
+    run_env = {**os.environ, **env} if env else None
 
     try:
         proc = subprocess.run(
@@ -76,6 +81,7 @@ def execute(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout,
+            env=run_env,
         )
         rc = proc.returncode
         raw = proc.stdout or b""

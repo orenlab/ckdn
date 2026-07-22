@@ -21,7 +21,17 @@
     "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}, "minItems": 1},
     "findings_truncated": {"type": "integer", "minimum": 1},
     "artifacts": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-    "log_tail": {"type": "array", "items": {"type": "string"}}
+    "log_tail": {"type": "array", "items": {"type": "string"}},
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["known", "new"],
+      "properties": {
+        "known": {"type": "integer", "minimum": 0},
+        "new": {"type": "integer", "minimum": 0}
+      }
+    },
+    "gate": {"$ref": "#/$defs/gate"}
   },
   "allOf": [
     {
@@ -40,7 +50,18 @@
         "kind": {"type": "string", "minLength": 1},
         "message": {"type": "string"},
         "location": {"type": "string"},
-        "detail": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+        "detail": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "baselined": {"const": true}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "policy"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "unavailable"]},
+        "policy": {"type": "string"},
+        "reason": {"type": "string"}
       }
     }
   }

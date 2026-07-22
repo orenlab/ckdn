@@ -94,6 +94,7 @@ def fake_execute(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[int]]:
         cwd: Path,
         run_dir: Path,
         timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         check = _check_from_run_dir(run_dir)
         queue = state.setdefault(check, [0])

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -23,6 +22,7 @@ from ckdn.app import (
     list_checks,
     list_runs,
     run_alias,
+    run_all,
     run_check,
     run_one,
 )
@@ -52,14 +52,17 @@ def _load_cfg(tmp_path: Path, body: str) -> Config:
 
 @pytest.fixture(autouse=True)
 def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Windows has no ``true``/``false`` binaries. Stand in for ``execute`` so
-    the app-layer run tests stay portable there; POSIX runs the real commands.
+    """Stand in for ``execute`` so the app-layer run tests are OS-independent
+    (Windows has no ``true``/``false``; real subprocess execution is covered by
+    test_runner via ``sys.executable``). ``true`` -> rc 0, ``false`` -> rc 1.
     Tests that install their own ``execute`` stub override this."""
-    if os.name != "nt":
-        return
 
     def _fake(
-        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         rc = 1 if tokens and tokens[0] == "false" else 0
@@ -113,6 +116,44 @@ def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
     assert run_dir.startswith(".agent-runs/")
 
 
+def test_check_env_passed_with_run_dir_substituted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        'env = { K = "v", OUT = "{run_dir}/cov.xml" }\n',
+    )
+    captured: dict[str, dict[str, str] | None] = {}
+
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        captured["env"] = env
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=0,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    run_one(cfg, cfg.checks["ok"], extra=[])
+    env = captured["env"]
+    assert env is not None
+    assert env["K"] == "v"
+    assert env["OUT"].endswith("/cov.xml") and "{run_dir}" not in env["OUT"]
+
+
 def test_aggregate_run_dir_matches_member_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -123,7 +164,11 @@ def test_aggregate_run_dir_matches_member_digest(
     )
 
     def _exec(
-        tokens: list[str], cwd: Path, run_dir: Path, timeout: float | None
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
     ) -> RunOutcome:
         (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         return RunOutcome(
@@ -141,6 +186,81 @@ def test_aggregate_run_dir_matches_member_digest(
     result = run_alias(cfg, cfg.checks["g"])
     agg_member = result.aggregate["members"][0]
     assert agg_member["run_dir"] == result.members[0].digest["run_dir"]
+
+
+def _rc_by_suffix(run_dir: Path, fail_suffix: str) -> int:
+    return 1 if run_dir.name.endswith(fail_suffix) else 0
+
+
+def test_run_all_runs_every_atomic_skipping_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n'
+        '[check.b]\ncommand = "false"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["a", "b"]\n',
+    )
+
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=_rc_by_suffix(run_dir, "-b"),
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    result = run_all(cfg)
+    assert result.alias == "*"
+    assert result.aggregate["schema"] == "ckdn.aggregate/1"
+    # every atomic ran, in config order; the alias `g` is skipped
+    assert [m["check"] for m in result.aggregate["members"]] == ["a", "b"]
+    assert result.aggregate["status"] == "fail" and result.exit_code == 1
+
+
+def test_run_all_fail_fast_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.a]\ncommand = "false"\nparser = "generic"\n'
+        '[check.b]\ncommand = "true"\nparser = "generic"\n',
+    )
+
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=_rc_by_suffix(run_dir, "-a"),
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+    result = run_all(cfg, fail_fast=True)
+    assert [m["check"] for m in result.aggregate["members"]] == ["a"]
 
 
 def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
@@ -438,9 +558,6 @@ def test_run_alias_not_alias_and_status_fail(
     assert result.status == "fail"
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="POSIX absolute-path artifact escape (/etc/passwd)"
-)
 def test_run_one_rejects_parser_artifact_escape(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,
@@ -461,7 +578,7 @@ def test_run_one_run_dir_outside_root(
     outside = tmp_path.parent / f"{tmp_path.name}-outside-run"
     outside.mkdir()
 
-    def _execute(tokens, cwd, run_dir, timeout):  # type: ignore[no-untyped-def]
+    def _execute(tokens, cwd, run_dir, timeout, env=None):  # type: ignore[no-untyped-def]
         return RunOutcome(
             run_dir=run_dir,
             tokens=tokens,

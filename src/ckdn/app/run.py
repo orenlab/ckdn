@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
+from ckdn import baseline
 from ckdn.app.errors import (
     AliasExtraArgsError,
     NotAliasError,
@@ -44,6 +46,46 @@ def exit_from_outcome(rc: int, status: str) -> int:
     if rc != 0:
         return rc if 0 < rc <= 255 else 1
     return 0 if status == "pass" else 1
+
+
+def _annotate_baseline(
+    cfg: Config,
+    check_name: str,
+    execution_status: str,
+    result: ParseResult,
+    digest: dict[str, Any],
+) -> None:
+    """Classify findings against the baseline and attach ``baseline``/``gate``.
+
+    Execution truth (``digest['status']``) is never touched — see
+    :mod:`ckdn.baseline`. Only runs when ``[run].baseline`` is configured.
+    """
+    baseline_path = cfg.baseline_path
+    if baseline_path is None:
+        return
+    accepted = baseline.load(baseline_path).get(check_name, set())
+    new = 0
+    known = 0
+    for finding in result.findings:
+        if baseline.fingerprint(check_name, finding.to_dict()) in accepted:
+            known += 1
+        else:
+            new += 1
+    for shown in digest.get("findings", []):
+        if baseline.fingerprint(check_name, shown) in accepted:
+            shown["baselined"] = True
+    if known or new:
+        digest["baseline"] = {"known": known, "new": new}
+    digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
+
+
+def _attach_aggregate_gate(
+    aggregate: dict[str, Any], results: list[AtomicRunResult]
+) -> None:
+    """Combine member gates into an aggregate gate (unavailable > fail > pass)."""
+    combined = baseline.combine_gate([r.digest for r in results])
+    if combined is not None:
+        aggregate["gate"] = combined
 
 
 def run_one(
@@ -95,7 +137,17 @@ def run_one(
             include_log_tail=True,
         )
     else:
-        outcome = execute(tokens, cwd=cfg.cwd, run_dir=run_dir, timeout=check.timeout)
+        run_env = {
+            key: value.replace("{run_dir}", str(run_dir))
+            for key, value in check.env.items()
+        } or None
+        outcome = execute(
+            tokens,
+            cwd=cfg.cwd,
+            run_dir=run_dir,
+            timeout=check.timeout,
+            env=run_env,
+        )
 
     if not policy_blocked:
         try:
@@ -139,6 +191,7 @@ def run_one(
         tail_lines=cfg.run.log_tail_lines,
         artifacts=list_artifacts(run_dir),
     )
+    _annotate_baseline(cfg, check.name, status, result, digest)
     write_documents(run_dir, digest, meta)
     update_latest(cfg.runs_dir, run_dir)
     prune(cfg.runs_dir, cfg.run.keep)
@@ -185,8 +238,43 @@ def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
         status=status,
         rc=exit_code,
     )
+    _attach_aggregate_gate(aggregate, results)
     return AliasRunResult(
         alias=alias.name,
+        status=status,
+        aggregate=aggregate,
+        members=tuple(results),
+        exit_code=exit_code,
+    )
+
+
+def run_all(cfg: Config, *, fail_fast: bool = False) -> AliasRunResult:
+    """Run every **atomic** check in config order and return one aggregate.
+
+    Aliases are skipped (they only group atomics, which all run here anyway).
+    Defaults to running every check; ``fail_fast`` stops at the first non-green
+    one. The aggregate uses ``alias = "*"`` to denote "all atomic checks".
+    """
+    results: list[AtomicRunResult] = []
+    for check in cfg.checks.values():
+        if check.is_alias:
+            continue
+        outcome = run_one(cfg, check, extra=[])
+        results.append(outcome)
+        if fail_fast and outcome.exit_code != 0:
+            break
+
+    exit_code = _alias_aggregate_exit(results)
+    status = "pass" if exit_code == 0 else "fail"
+    aggregate = build_alias_aggregate(
+        alias="*",
+        results=[(r.check, r.status, r.rc, r.digest["run_dir"]) for r in results],
+        status=status,
+        rc=exit_code,
+    )
+    _attach_aggregate_gate(aggregate, results)
+    return AliasRunResult(
+        alias="*",
         status=status,
         aggregate=aggregate,
         members=tuple(results),

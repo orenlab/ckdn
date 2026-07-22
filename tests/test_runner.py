@@ -79,6 +79,22 @@ def test_execute_timeout(tmp_path: Path) -> None:
     assert "timed out" in outcome.exec_note
 
 
+def test_execute_overlays_env_and_keeps_inherited(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    code = (
+        "import os,sys; "
+        "sys.stdout.write(os.environ.get('CKDN_X','MISSING')); "
+        "sys.stdout.write('|' + ('PATH' in os.environ and 'has-path' or 'no-path'))"
+    )
+    outcome = execute(
+        [sys.executable, "-c", code], tmp_path, run_dir, None, env={"CKDN_X": "hello"}
+    )
+    assert outcome.rc == 0
+    # per-check var is injected, and the inherited environment survives
+    assert outcome.log_text == "hello|has-path"
+
+
 def test_execute_command_not_found(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

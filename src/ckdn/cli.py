@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
-from ckdn import __version__
+from ckdn import __version__, baseline
+from ckdn.annotate import to_github, to_sarif
 from ckdn.app import (
     AliasRunResult,
     AppError,
@@ -31,6 +33,7 @@ from ckdn.app import (
     get_digest,
     list_checks,
     list_runs,
+    run_all,
     run_check,
 )
 from ckdn.app import run_one as app_run_one
@@ -44,6 +47,7 @@ from ckdn.config import (
 )
 from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
+from ckdn.preflight import diagnose
 from ckdn.runner import prune
 from ckdn.schema import load_schema, schema_ids
 
@@ -79,8 +83,29 @@ def run_one(
     return result
 
 
+def _run_exit(
+    args: argparse.Namespace, gate: dict[str, Any] | None, execution_exit: int
+) -> int:
+    """Process exit for ``run``: the baseline gate with ``--gate``, else the
+    honest execution exit."""
+    if getattr(args, "gate", False) and gate is not None:
+        return baseline.gate_exit(gate.get("status"), execution_exit)
+    return execution_exit
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load(args)
+    if args.all:
+        if args.check is not None:
+            return _fail("pass a check name or --all, not both")
+        if args.extra:
+            return _fail("--all does not accept extra arguments")
+        result = run_all(cfg, fail_fast=args.fail_fast)
+        if not args.quiet:
+            print(dump_json(result.aggregate), end="")
+        return _run_exit(args, result.aggregate.get("gate"), result.exit_code)
+    if args.check is None:
+        return _fail("specify a check name, or --all to run every atomic check")
     try:
         outcome = run_check(cfg, args.check, extra=list(args.extra))
     except AppError as exc:
@@ -88,10 +113,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if isinstance(outcome, AliasRunResult):
         if not args.quiet:
             print(dump_json(outcome.aggregate), end="")
-        return outcome.exit_code
+        return _run_exit(args, outcome.aggregate.get("gate"), outcome.exit_code)
     if not args.quiet:
         print(dump_json(outcome.digest), end="")
-    return outcome.exit_code
+    return _run_exit(args, outcome.digest.get("gate"), outcome.exit_code)
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -106,14 +131,22 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     cfg = _load(args)
-    for row in list_runs(cfg, limit=args.n):
+    rows = list_runs(cfg, limit=args.n)
+    if args.json:
+        print(dump_json({"runs": rows}), end="")
+        return 0
+    for row in rows:
         print(f"{row['run_id']}\t{row['check']}\t{row['status']}")
     return 0
 
 
 def cmd_checks(args: argparse.Namespace) -> int:
     cfg = _load(args)
-    for item in list_checks(cfg):
+    items = list_checks(cfg)
+    if args.json:
+        print(dump_json({"checks": items}), end="")
+        return 0
+    for item in items:
         if item["kind"] == "alias":
             members = ",".join(item["members"])
             print(f"{item['name']}\talias={members}\tfail_fast={item['fail_fast']}")
@@ -146,6 +179,82 @@ def cmd_verify_config(args: argparse.Namespace) -> int:
             print(f"ckdn: {line}", file=sys.stderr)
         return 1
     print("ok")
+    return 0
+
+
+def cmd_baseline(args: argparse.Namespace) -> int:
+    """Record a check's current findings as the accepted baseline.
+
+    Runs the check(s) and writes their finding fingerprints to the configured
+    ``[run].baseline`` file. Members of an alias are recorded individually.
+    """
+    cfg = _load(args)
+    baseline_path = cfg.baseline_path
+    if baseline_path is None:
+        return _fail('set `baseline = "…"` under [run] in ckdn.toml first')
+    check = cfg.checks.get(args.check)
+    if check is None:
+        return _fail(
+            f"unknown check '{args.check}'; configured: " + ", ".join(cfg.checks)
+        )
+    targets = (
+        [cfg.checks[m] for m in (check.members or ())] if check.is_alias else [check]
+    )
+    current = baseline.load(baseline_path)
+    for target in targets:
+        # Record every finding, not just the digest's top-N slice.
+        uncapped = dataclasses.replace(
+            target, options={**target.options, "top": 1_000_000_000}
+        )
+        result = app_run_one(cfg, uncapped, extra=[])
+        fingerprints = baseline.fingerprints_for(
+            target.name, result.digest.get("findings", [])
+        )
+        current[target.name] = fingerprints
+        print(f"recorded {len(fingerprints)} finding(s) for {target.name}")
+    baseline.save(baseline_path, current)
+    print(f"wrote {baseline_path}")
+    return 0
+
+
+def cmd_annotate(args: argparse.Namespace) -> int:
+    """Project a stored digest's findings to CI annotations or SARIF."""
+    cfg = _load(args)
+    try:
+        digest = get_digest(cfg, args.ref)
+    except AppError as exc:
+        return _fail(str(exc))
+    if args.format == "sarif":
+        print(dump_json_pretty(to_sarif(digest)), end="")
+    else:
+        for line in to_github(digest):
+            print(line)
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Static pre-flight diagnostics: executables on PATH + parser/command fit.
+
+    Exit 1 on any error (a run that cannot work), or on any warning when
+    ``--strict``; otherwise 0.
+    """
+    cfg = _load(args)
+    diagnostics = diagnose(cfg)
+    errors = 0
+    warnings = 0
+    for d in diagnostics:
+        if d.level == "error":
+            errors += 1
+            print(f"error: [{d.check}] {d.message}", file=sys.stderr)
+        else:
+            warnings += 1
+            print(f"warning: [{d.check}] {d.message}")
+    if not diagnostics:
+        print("ok: all checks look consistent")
+        return 0
+    print(f"{errors} error(s), {warnings} warning(s)", file=sys.stderr)
+    if errors or (args.strict and warnings):
+        return 1
     return 0
 
 
@@ -191,7 +300,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="run a configured check and emit its digest")
     add_config(p_run)
-    p_run.add_argument("check", help="check name from ckdn.toml")
+    p_run.add_argument(
+        "check", nargs="?", help="check name from ckdn.toml (omit with --all)"
+    )
+    p_run.add_argument(
+        "--all",
+        action="store_true",
+        dest="all",
+        help="run every atomic check in config order → aggregate on stdout",
+    )
+    p_run.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="with --all, stop at the first non-green check",
+    )
+    p_run.add_argument(
+        "--gate",
+        action="store_true",
+        help="exit reflects the baseline gate (new findings), not execution",
+    )
     p_run.add_argument("--quiet", action="store_true", help="do not print the digest")
     p_run.add_argument(
         "extra",
@@ -207,11 +334,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_show.set_defaults(fn=cmd_show)
 
     p_list = sub.add_parser("list", help="list recent runs")
+    p_list.add_argument(
+        "--json", action="store_true", help='emit {"runs": [...]} as JSON'
+    )
     add_config(p_list)
     p_list.add_argument("-n", type=int, default=10)
     p_list.set_defaults(fn=cmd_list)
 
     p_checks = sub.add_parser("checks", help="list configured checks")
+    p_checks.add_argument(
+        "--json", action="store_true", help='emit {"checks": [...]} as JSON'
+    )
     add_config(p_checks)
     p_checks.set_defaults(fn=cmd_checks)
 
@@ -222,6 +355,42 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
     p_init.set_defaults(fn=cmd_init)
+
+    p_baseline = sub.add_parser(
+        "baseline",
+        help="record a check's current findings as the accepted baseline",
+    )
+    add_config(p_baseline)
+    p_baseline.add_argument("check", help="check (or alias) name from ckdn.toml")
+    p_baseline.set_defaults(fn=cmd_baseline)
+
+    p_annotate = sub.add_parser(
+        "annotate",
+        help="render a stored digest's findings as CI annotations or SARIF",
+    )
+    add_config(p_annotate)
+    p_annotate.add_argument(
+        "ref", nargs="?", help="run directory name (latest default)"
+    )
+    p_annotate.add_argument(
+        "--format",
+        choices=["github", "sarif"],
+        default="github",
+        help="github workflow commands (default) or a SARIF 2.1.0 document",
+    )
+    p_annotate.set_defaults(fn=cmd_annotate)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="pre-flight diagnostics: executables on PATH + parser/command fit",
+    )
+    add_config(p_doctor)
+    p_doctor.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit nonzero on warnings too, not just errors",
+    )
+    p_doctor.set_defaults(fn=cmd_doctor)
 
     p_schema = sub.add_parser(
         "schema",
