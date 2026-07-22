@@ -590,8 +590,9 @@ def test_latest_always_points_somewhere_while_being_updated(
     resolved = resolve_run_dir(runs)
     assert resolved is not None
     assert resolved.resolve() == second.resolve()
-    # A stale marker file must never survive next to a working link:
-    # readers cannot tell which of two disagreeing pointers is newer. On a
-    # case-insensitive filesystem the two names *are* one path, so the test
-    # is about a regular file, not about the name existing.
-    assert not (runs / LATEST_FILE).is_file()
+    # Exactly one pointer form, never two that could disagree about which run
+    # is newest. Which form it is depends on the platform — Windows publishes
+    # the marker, POSIX the symlink — and on a case-insensitive filesystem the
+    # two names are one path, so the link is identified by being a symlink
+    # rather than by its name existing.
+    assert (runs / LATEST_LINK).is_symlink() != (runs / LATEST_FILE).is_file()
