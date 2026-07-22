@@ -195,8 +195,10 @@ def test_a_descendant_holding_stdout_cannot_block_the_run(tmp_path: Path) -> Non
         # The bug: this returned only when the *grandchild* finally exited.
         assert elapsed < 10, "execute() waited on a descendant that outlived the child"
     finally:
+        # SIGTERM, not SIGKILL: Windows has no SIGKILL, and os.kill there maps
+        # any other signal to TerminateProcess.
         with contextlib.suppress(OSError):
-            os.kill(grandchild, signal.SIGKILL)
+            os.kill(grandchild, signal.SIGTERM)
 
 
 def test_interrupt_terminates_tree_records_evidence_and_rc_130(
