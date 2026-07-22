@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime as dt
-from collections.abc import Callable, Iterable
-from typing import Any
+import signal
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any, TypeVar
 
 from ckdn import baseline
 from ckdn.app.errors import (
@@ -44,6 +46,8 @@ from ckdn.runner import (
     run_lock,
     update_latest,
 )
+
+_T = TypeVar("_T")
 
 
 def exit_from_outcome(rc: int, status: str) -> int:
@@ -83,17 +87,36 @@ def _annotate_baseline(
     digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
 
 
-def _uninterruptible(write: Callable[[], None]) -> None:
-    """Give the evidence write one more chance if Ctrl-C lands mid-flight.
+@contextlib.contextmanager
+def _sigint_held() -> Iterator[None]:
+    """Hold off Ctrl-C for a moment; a worker thread simply cannot."""
+    try:
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except ValueError:  # not the main thread — the MCP server runs there
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
-    This write is the only thing standing between a killed run and an empty
-    run directory — the exact symptom of the incident this path exists to
-    prevent. Losing it to an impatient second keypress would reintroduce it.
+
+def _uninterruptible(step: Callable[[], _T]) -> _T:
+    """Produce the run's evidence even while Ctrl-C is being held down.
+
+    An empty run directory is the exact symptom of the incident this whole
+    path exists to prevent, so the retry runs with SIGINT held off rather
+    than racing another keypress. Nothing is swallowed that matters: the
+    outcome already records the interrupt, and the run exits 130 either way.
+
+    ``step`` must be idempotent — it is rebuilt from the same inputs and the
+    documents it writes are overwritten wholesale.
     """
     try:
-        write()
+        return step()
     except KeyboardInterrupt:
-        write()
+        with _sigint_held():
+            return step()
 
 
 def _run_sequence(
@@ -219,12 +242,19 @@ def _run_atomic(
             )
         except KeyboardInterrupt:
             # Ctrl-C after the command finished but before its output was
-            # understood. The evidence below still gets written; it is just
-            # partial, and reconcile is told so.
-            outcome = dataclasses.replace(outcome, interrupted=True)
+            # understood. The command's own exit code stops being the run's
+            # outcome the moment the run is cut short: a Ctrl-C is 130
+            # everywhere else, and leaving the tool's code here would make the
+            # digest contradict the status model on a real interrupt path.
+            # It is not lost — the note keeps it.
+            command_rc = outcome.rc
+            outcome = dataclasses.replace(outcome, interrupted=True, rc=RC_INTERRUPTED)
             result = ParseResult(
                 parser_ok=False,
-                notes=["run interrupted while parsing the tool output"],
+                notes=[
+                    "run interrupted while parsing the tool output; the "
+                    f"command itself had exited {command_rc}"
+                ],
                 evidence_expected=True,
                 include_log_tail=True,
             )
@@ -241,40 +271,44 @@ def _run_atomic(
         # outcome, so it is recorded as evidence and never touches the status.
         result.notes.insert(0, lock_note)
 
-    status, reason, include_tail = reconcile(
-        outcome.rc,
-        result,
-        interrupted=outcome.interrupted,
-        timed_out=outcome.timed_out,
-    )
-
-    meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
     try:
         # as_posix keeps the digest path separator stable across OSes, so a
         # digest generated on Windows is byte-identical to one on POSIX.
         run_dir_rel = run_dir.relative_to(cfg.cwd).as_posix()
     except ValueError:
         run_dir_rel = run_dir.as_posix()
-    digest = build_digest(
-        check=check.name,
-        status=status,
-        reason=reason,
-        outcome=outcome,
-        result=result,
-        run_dir_rel=run_dir_rel,
-        top=int(check.options.get("top", cfg.run.top)),
-        include_tail=include_tail,
-        tail_lines=cfg.run.log_tail_lines,
-        artifacts=list_artifacts(run_dir),
-    )
-    _annotate_baseline(cfg, check.name, status, result, digest)
 
-    def _persist() -> None:
+    def _finalize() -> tuple[str, dict[str, Any]]:
+        # Building the documents belongs inside the protected step, not just
+        # writing them: a Ctrl-C in reconcile or build_digest would otherwise
+        # abandon a run directory that has a log but no digest — the same
+        # symptom, one stage earlier.
+        status, reason, include_tail = reconcile(
+            outcome.rc,
+            result,
+            interrupted=outcome.interrupted,
+            timed_out=outcome.timed_out,
+        )
+        meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
+        digest = build_digest(
+            check=check.name,
+            status=status,
+            reason=reason,
+            outcome=outcome,
+            result=result,
+            run_dir_rel=run_dir_rel,
+            top=int(check.options.get("top", cfg.run.top)),
+            include_tail=include_tail,
+            tail_lines=cfg.run.log_tail_lines,
+            artifacts=list_artifacts(run_dir),
+        )
+        _annotate_baseline(cfg, check.name, status, result, digest)
         write_documents(run_dir, digest, meta)
         update_latest(cfg.runs_dir, run_dir)
         prune(cfg.runs_dir, cfg.run.keep)
+        return status, digest
 
-    _uninterruptible(_persist)
+    status, digest = _uninterruptible(_finalize)
 
     return AtomicRunResult(
         check=check.name,

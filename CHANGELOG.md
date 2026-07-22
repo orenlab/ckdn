@@ -74,7 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     uninterruptibly on Windows, so keypresses were ignored entirely there;
     the wait now polls. A second Ctrl-C during the grace period, or one during
     parsing or the evidence write, no longer abandons the run directory
-    without a digest.
+    without a digest — the protected step builds the documents as well as
+    writing them, and its retry holds `SIGINT` off rather than racing the
+    next keypress.
+  - A Ctrl-C is `rc=130` wherever it lands, including after the command has
+    already exited and while its output is being parsed. That path kept the
+    tool's own exit code, so a single `ckdn run` exited `1` with `"rc": 0` in
+    a digest that also said `interrupted: true` — contradicting this very
+    entry. The command's own code is kept in the run's notes.
   - `latest` is published by rename. Unlinking it first left a window with no
     pointer at all, and two runs finishing together could both unlink and race
     to create — the loser falling back to the `LATEST` marker, leaving two

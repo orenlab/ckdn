@@ -26,6 +26,7 @@ from ckdn.app import (
     run_check,
     run_one,
 )
+from ckdn.app import run as app_run
 from ckdn.config import Config, load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
 from ckdn.runner import (
@@ -698,3 +699,38 @@ def test_ctrl_c_while_parsing_still_leaves_a_digest(
     assert (result.run_dir / DIGEST_NAME).exists()
     assert (result.run_dir / META_NAME).exists()
     assert (result.run_dir / LOG_NAME).exists()
+    # A Ctrl-C is 130 wherever it lands. Asserting only on `interrupted` let
+    # the command's own exit code survive here, so a single `ckdn run` exited
+    # 1 with `rc: 0` in its digest while the status model promised 130.
+    assert result.digest["rc"] == 130
+    assert result.exit_code == 130
+    assert any("had exited 0" in note for note in result.digest["notes"]), (
+        "the command's own exit code must still be recoverable from the run"
+    )
+
+
+def test_ctrl_c_between_parsing_and_the_write_still_leaves_a_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The interrupt lands after parsing, while the documents are built.
+
+    Protecting only the write left this window open: the run directory has a
+    log and no digest — the same symptom one stage earlier.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    calls: list[int] = []
+
+    # `_annotate_baseline` sits between building the digest and writing it,
+    # and is a no-op when no baseline is configured — so standing in for it
+    # interrupts exactly that window without changing the result.
+    def _interrupt_once(*_args: object) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(app_run, "_annotate_baseline", _interrupt_once)
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert len(calls) == 2, "the protected step must be retried, not abandoned"
+    assert (result.run_dir / DIGEST_NAME).exists()
+    assert (result.run_dir / META_NAME).exists()
