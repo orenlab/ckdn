@@ -234,6 +234,11 @@ def test_interrupt_terminates_tree_records_evidence_and_rc_130(
     assert _wait_dead(grandchild), "grandchild outlived the interrupt"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="graceful-then-forceful escalation is POSIX signal semantics; "
+    "Windows terminates the tree unconditionally via taskkill /F",
+)
 def test_a_term_immune_grandchild_is_still_killed(tmp_path: Path) -> None:
     """The wrapper dies on SIGTERM; the tool it launched ignores it.
 
@@ -383,15 +388,36 @@ def test_a_clean_acquire_yields_no_warning(tmp_path: Path) -> None:
         assert note is None
 
 
-def test_the_lock_records_the_holder_and_empties_it_on_exit(
-    tmp_path: Path,
-) -> None:
+def test_the_lock_empties_its_record_on_exit(tmp_path: Path) -> None:
     lock = tmp_path / ".locks" / "x.lock"
     with run_lock(tmp_path, "x"):
-        assert lock.read_text(encoding="utf-8").strip() == f"ckdn pid {os.getpid()}"
+        pass  # the record cannot be read from here: Windows locks are mandatory
     assert lock.read_text(encoding="utf-8") == "", (
         "an empty record is how the next run knows this one finished"
     )
+
+
+def test_a_killed_run_is_named_in_the_next_runs_warning(tmp_path: Path) -> None:
+    """End-to-end: hold the lock in another process, kill it, then acquire.
+
+    This is the whole point of recording a holder — it proves the record
+    survives a kill and identifies who left it, without reading the file
+    while the lock is held.
+    """
+    src = str(Path(__file__).resolve().parent.parent / "src")
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_LOCK, src, str(tmp_path), "named"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "held"
+    holder.kill()
+    holder.wait()
+
+    with run_lock(tmp_path, "named") as note:
+        assert note is not None
+        assert f"ckdn pid {holder.pid}" in note
 
 
 @pytest.mark.skipif(
