@@ -98,7 +98,7 @@ def _signal_group(pgid: int, sig: int) -> None:
         os.killpg(pgid, sig)
 
 
-def _terminate_group(pgid: int, grace: float) -> None:
+def _terminate_group(proc: subprocess.Popen[bytes], pgid: int, grace: float) -> None:
     """SIGTERM the group, wait out the grace, then SIGKILL whatever is left.
 
     The escalation watches the *group*, never the direct child. A wrapper
@@ -106,10 +106,17 @@ def _terminate_group(pgid: int, grace: float) -> None:
     tool it launched ignores it -- waiting on the child would come back
     "finished" and the SIGKILL would never be sent, leaving exactly the
     orphans this mechanism exists to prevent.
+
+    The poll reaps our own child as it goes. An unreaped zombie is still a
+    member of the group, so leaving it would make the group look alive for the
+    entire grace period: every interrupt would cost the full five seconds and
+    end in SIGKILL, and no tool would ever get the chance to shut down cleanly
+    that the grace period exists to give it.
     """
     _signal_group(pgid, signal.SIGTERM)
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
+        proc.poll()
         if not _group_alive(pgid):
             return
         time.sleep(POLL_SECONDS)
@@ -133,7 +140,7 @@ def _terminate_tree_posix(proc: subprocess.Popen[bytes], grace: float) -> None:
         return
     if not _group_alive(pgid):
         return  # nothing left; do not risk signalling a recycled group id
-    _terminate_group(pgid, grace)
+    _terminate_group(proc, pgid, grace)
 
 
 def _terminate_tree_windows(

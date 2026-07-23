@@ -26,6 +26,7 @@ from ckdn.runner import (
     RC_INTERRUPTED,
     RC_NOT_FOUND,
     RC_TIMEOUT,
+    TERM_GRACE_SECONDS,
     RunLockError,
     _lock_path,
     _pid_alive,
@@ -36,6 +37,7 @@ from ckdn.runner import (
     prune,
     resolve_run_dir,
     run_lock,
+    terminate_tree,
     update_latest,
 )
 
@@ -596,3 +598,33 @@ def test_latest_always_points_somewhere_while_being_updated(
     # two names are one path, so the link is identified by being a symlink
     # rather than by its name existing.
     assert (runs / LATEST_LINK).is_symlink() != (runs / LATEST_FILE).is_file()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX zombie/process-group semantics")
+def test_a_tool_that_exits_on_sigterm_is_not_killed_anyway(tmp_path: Path) -> None:
+    """The grace period has to be able to end early, or it is not a grace.
+
+    An unreaped child is still a member of its group, so `killpg(pgid, 0)`
+    kept answering "alive" after it had already died: every timeout and every
+    Ctrl-C burned the full five seconds and finished with SIGKILL, which is
+    exactly the shutdown a tool is being given the grace period to avoid.
+    Measured against codeclone's suite, a Ctrl-C took 5.24s.
+    """
+    log = tmp_path / "l"
+    with log.open("wb") as fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time;time.sleep(300)"],
+            stdout=fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    time.sleep(0.3)  # let it reach the sleep before signalling
+    start = time.monotonic()
+    terminate_tree(proc)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < TERM_GRACE_SECONDS / 2, (
+        f"terminate_tree took {elapsed:.2f}s for a child that dies on SIGTERM; "
+        "the grace period is being waited out in full"
+    )
+    assert proc.returncode is not None
