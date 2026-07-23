@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import functools
 import signal
 import subprocess
 import time
@@ -49,16 +50,24 @@ ACTIVE_PROCESSES_OFFSET = 40
 JOB_ATTR = "_ckdn_win_job"
 
 
+@functools.cache
 def kernel32() -> Any:
-    return ctypes.WinDLL("kernel32", use_last_error=True)
+    """The one configured kernel32 binding.
+
+    Cached so the return types below are declared exactly once. Without an
+    explicit restype ctypes truncates a handle to a C int, silently corrupting
+    it on 64-bit; leaving that to each call site means the next helper added
+    here breaks quietly by forgetting an incantation.
+    """
+    lib = ctypes.WinDLL("kernel32", use_last_error=True)
+    lib.OpenProcess.restype = wintypes.HANDLE
+    lib.CreateJobObjectW.restype = wintypes.HANDLE
+    return lib
 
 
 def open_process(pid: int, access: int) -> int:
     """A handle for `pid`, or 0. The caller closes it with `close`."""
     lib = kernel32()
-    # Without an explicit restype ctypes truncates the handle to a C int,
-    # which silently corrupts 64-bit handles.
-    lib.OpenProcess.restype = wintypes.HANDLE
     return int(lib.OpenProcess(access, False, wintypes.DWORD(pid)) or 0)
 
 
@@ -88,7 +97,9 @@ def pid_alive(pid: int) -> bool:
         ):
             return False
         # A process that really exits with 259 is misread as alive; that is
-        # this API's accepted ambiguity, and it only delays a lock reclaim.
+        # this API's accepted ambiguity. The cost is a delayed `taskkill`
+        # in the jobless branch -- locks stopped depending on pid liveness
+        # when they became file locks.
         return bool(code.value == STILL_ACTIVE)
     finally:
         close(handle)
@@ -131,7 +142,6 @@ def create_job() -> int | None:
     )
 
     lib = kernel32()
-    lib.CreateJobObjectW.restype = wintypes.HANDLE
     job = lib.CreateJobObjectW(None, None)
     if not job:
         return None
@@ -181,9 +191,11 @@ def job_active(job: int) -> int | None:
 def break_group(pid: int) -> bool:
     """Ask the child's console group to stop -- the closest thing to SIGTERM.
 
-    The child leads its own group (``CREATE_NEW_PROCESS_GROUP``), so the event
-    reaches it and its descendants. It fails where there is no console at all,
-    which is exactly where there was nothing graceful to attempt.
+    The child leads its own group (``CREATE_NEW_PROCESS_GROUP``), so the
+    event reaches it and every descendant that stayed in that group. One that
+    created a group of its own does not get it -- what holds *that* one is the
+    job, not this. Fails where there is no console at all, which is exactly
+    where there was nothing graceful to attempt.
     """
     return bool(
         kernel32().GenerateConsoleCtrlEvent(

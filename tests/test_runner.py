@@ -269,8 +269,8 @@ def test_interrupt_terminates_tree_records_evidence_and_rc_130(
 
 @pytest.mark.skipif(
     os.name == "nt",
-    reason="graceful-then-forceful escalation is POSIX signal semantics; "
-    "Windows terminates the tree unconditionally via taskkill /F",
+    reason="SIGTERM-immunity is POSIX signal semantics; the Windows "
+    "escalation has its own tests",
 )
 def test_a_term_immune_grandchild_is_still_killed(tmp_path: Path) -> None:
     """The wrapper dies on SIGTERM; the tool it launched ignores it.
@@ -667,14 +667,18 @@ def test_a_job_object_really_holds_and_kills_the_child() -> None:
         [sys.executable, "-c", "import time;time.sleep(60)"],
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
     )
+    closed = False
     try:
         assert _win32.assign_job(job, child.pid) is True, (
             "AssignProcessToJobObject failed"
         )
         assert _win32.pid_alive(child.pid) is True
         _win32.close(job)  # the kill is the handle going away
+        closed = True
         assert _wait_dead(child.pid), "KILL_ON_JOB_CLOSE did not take the child"
     finally:
+        if not closed:  # a failed assertion above must not leak the job
+            _win32.close(job)
         with contextlib.suppress(OSError):
             child.kill()
         child.wait()

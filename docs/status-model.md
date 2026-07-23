@@ -58,8 +58,9 @@ report the series' verdict and hide that the rest never ran.
 
 ### What "terminated" guarantees
 
-The child is started detached and **the whole tree** — not just the direct
-child — is stopped: asked to finish, given a grace period, then terminated
+The child is detached into its own process group (POSIX) or held in a job
+object (Windows), and **the whole tree** — not just the direct child — is
+stopped: asked to finish, given a grace period, then terminated
 outright. That is `SIGTERM` → grace → `SIGKILL` over the process group on
 POSIX, and `CTRL_BREAK` → grace → the job object on Windows. The group or job
 is what holds a wrapper's children when the wrapper itself exits first. The
