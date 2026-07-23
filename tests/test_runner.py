@@ -30,6 +30,9 @@ from ckdn.runner import (
     RunLockError,
     _lock_path,
     _pid_alive,
+    _win_assign_job,
+    _win_close,
+    _win_create_job,
     build_tokens,
     create_run_dir,
     execute,
@@ -628,3 +631,37 @@ def test_a_tool_that_exits_on_sigterm_is_not_killed_anyway(tmp_path: Path) -> No
         "the grace period is being waited out in full"
     )
     assert proc.returncode is not None
+
+
+def test_a_job_object_really_holds_and_kills_the_child() -> None:
+    """Prove the job is used, not silently skipped.
+
+    Every ctypes step falls back to `taskkill`, so a job that is never
+    created passes every other test exactly like one that works. This
+    exercises the real calls end to end: create, assign a live child, then
+    drop the handle — KILL_ON_JOB_CLOSE has to take the child with it, which
+    is also what makes a killed ckdn stop leaking its tree.
+    """
+    if sys.platform != "win32":
+        # Guards rather than a marker: this also narrows the platform, so the
+        # type checkers stop reading Windows-only names on POSIX.
+        pytest.skip("Windows job objects")
+
+    job = _win_create_job()
+    assert job is not None, "CreateJobObject / SetInformationJobObject failed"
+
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"],
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        assert _win_assign_job(job, child.pid) is True, (
+            "AssignProcessToJobObject failed"
+        )
+        assert _pid_alive(child.pid) is True
+        _win_close(job)  # the kill is the handle going away
+        assert _wait_dead(child.pid), "KILL_ON_JOB_CLOSE did not take the child"
+    finally:
+        with contextlib.suppress(OSError):
+            child.kill()
+        child.wait()
