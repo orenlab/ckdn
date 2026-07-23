@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `interrupted` field on digest, aggregate and `meta.json`. The packaged
   schemas are closed — re-export with `ckdn schema` if you pinned the 1.2.0
   copies
+- Windows stops the tree the way POSIX does: `CTRL_BREAK` → grace → a job
+  object. Previously it was killed outright with no chance to flush a report,
+  and `taskkill`'s parent-link walk missed a re-parented grandchild
 - Run locks are kernel file locks: no double runs, no wedging on a stale pid
 - `meta.json`'s `log_sha256` / `log_bytes` match `full.log` on disk
 - `ckdn baseline` refuses an interrupted or untrusted run

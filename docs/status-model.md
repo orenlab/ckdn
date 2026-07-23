@@ -58,28 +58,31 @@ report the series' verdict and hide that the rest never ran.
 
 ### What "terminated" guarantees
 
-On POSIX the child starts in its own process group and **the group** — not
-just the direct child — is terminated: `SIGTERM`, a grace period, then
-`SIGKILL` for whatever is still there. This is what makes the guarantee hold
-when a wrapper like `uv` exits promptly on `SIGTERM` while the tool it
-launched ignores it. The group is terminated on every path, including a clean
-exit, so a check cannot leave a background process appending to a log whose
-digest is sealed.
+The child is started detached and **the whole tree** — not just the direct
+child — is stopped: asked to finish, given a grace period, then terminated
+outright. That is `SIGTERM` → grace → `SIGKILL` over the process group on
+POSIX, and `CTRL_BREAK` → grace → the job object on Windows. Both halves
+matter: the ask is what lets a tool flush its report, and the group or job is
+what holds a wrapper's children when the wrapper itself exits first. The tree
+is stopped on every path, including a clean exit, so a check cannot leave a
+background process appending to a log whose digest is sealed.
 
-Three limits, stated rather than papered over:
+On Windows the tree is held by a job object rather than by parentage, so a
+grandchild whose parent already exited is still caught — and because the job
+is set to die with its last handle, the tree goes even when ckdn is killed
+outright.
 
-- **Windows has no graceful phase.** The tree is terminated forcefully at once
-  (`taskkill /T /F`), so a tool gets none of the grace a POSIX run gives it to
-  finish writing its report — the same `timeout` can therefore yield a
-  different digest on the two platforms. `taskkill` also walks parent links,
-  so a grandchild whose parent already exited is missed.
+Two limits, stated rather than papered over:
 
-- A check that deliberately detaches into a **new session** of its own leaves
-  ckdn's group and outlives the run. Nothing portable can prevent that.
-- `kill -9` on ckdn itself runs no cleanup, so its tree survives. The next run
-  of that check reclaims the lock and says so in its notes; ckdn never kills
-  anything it cannot prove it owns, because only its own pid is recorded and
-  pids get recycled.
+- **POSIX only:** a check that deliberately detaches into a **new session** of
+  its own leaves ckdn's group and outlives the run. Nothing portable prevents
+  that. A Windows job is not escapable the same way — breaking out of one
+  takes a flag the job does not grant.
+- **POSIX only:** `kill -9` on ckdn runs no cleanup, so its tree survives.
+  The next run of that check reclaims the lock and says so in its notes; ckdn
+  never kills anything it cannot prove it owns, because only its own pid is
+  recorded and pids get recycled. On Windows the job dies with ckdn's handle,
+  so this case is covered there.
 
 The log streams straight to `full.log`, so an interrupted run still leaves the
 output it managed to produce, and `meta.json` records the sha256 of those
