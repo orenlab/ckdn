@@ -29,10 +29,7 @@ from ckdn.runner import (
     TERM_GRACE_SECONDS,
     RunLockError,
     _lock_path,
-    _pid_alive,
-    _win_assign_job,
-    _win_close,
-    _win_create_job,
+    _spawn,
     build_tokens,
     create_run_dir,
     execute,
@@ -148,15 +145,30 @@ _SPAWNS_GRANDCHILD = (
 )
 
 
-def _wait_dead(pid: int, limit: float = 10.0) -> bool:
-    """Liveness the same way the runner sees it (portable across OSes).
+def _alive(pid: int) -> bool:
+    """Portable liveness for the tests themselves.
 
-    Both directions of `_pid_alive` are pinned independently by the run-lock
-    tests below, so reusing it here is not circular.
+    Production has no single-pid check on POSIX any more — termination is
+    driven by the process group — so this lives here rather than being kept
+    alive in the runner for the tests' benefit.
     """
+    if sys.platform == "win32":
+        from ckdn import _win32
+
+        return bool(_win32.pid_alive(pid))
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, simply not ours to signal
+    return True
+
+
+def _wait_dead(pid: int, limit: float = 10.0) -> bool:
     deadline = time.monotonic() + limit
     while time.monotonic() < deadline:
-        if not _pid_alive(pid):
+        if not _alive(pid):
             return True
         time.sleep(0.05)
     return False
@@ -290,27 +302,23 @@ def test_a_term_immune_grandchild_is_still_killed(tmp_path: Path) -> None:
 
 
 def test_pid_alive_tells_a_live_process_from_a_dead_one() -> None:
-    """Windows cannot use `os.kill(pid, 0)`; both branches must agree here."""
+    """Windows cannot use `os.kill(pid, 0)`; this is where that lives now."""
+    if sys.platform != "win32":
+        pytest.skip("the POSIX path has no single-pid liveness check")
+
+    from ckdn import _win32
+
     live = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
     dead = subprocess.Popen([sys.executable, "-c", ""])
     dead.wait()
     try:
-        assert _pid_alive(live.pid) is True
-        assert _pid_alive(dead.pid) is False
-        assert _pid_alive(0) is False
-        assert _pid_alive(-1) is False
-        # `os.kill` raises OverflowError here, which is not an OSError and so
-        # escaped every handler: the check stayed wedged until someone deleted
-        # the lock file by hand.
-        assert _pid_alive(2**31 + 5) is False
+        assert _win32.pid_alive(live.pid) is True
+        assert _win32.pid_alive(dead.pid) is False
     finally:
         live.kill()
         live.wait()
 
 
-# The holder reports its *own* pid rather than letting the test assume
-# Popen.pid: on Windows a venv's python.exe can be a trampoline, so the pid
-# the parent sees is the launcher's, not the interpreter's.
 _HOLD_LOCK = """
 import os, pathlib, sys, time
 sys.path.insert(0, sys.argv[1])
@@ -634,7 +642,10 @@ def test_a_tool_that_exits_on_sigterm_is_not_killed_anyway(tmp_path: Path) -> No
 
 
 def test_a_job_object_really_holds_and_kills_the_child() -> None:
-    """Prove the job is used, not silently skipped.
+    """The Win32 calls themselves work.
+
+    Note this is the *mechanism*, not the wiring: see the seam test below for
+    whether production actually reaches it.
 
     Every ctypes step falls back to `taskkill`, so a job that is never
     created passes every other test exactly like one that works. This
@@ -647,7 +658,9 @@ def test_a_job_object_really_holds_and_kills_the_child() -> None:
         # type checkers stop reading Windows-only names on POSIX.
         pytest.skip("Windows job objects")
 
-    job = _win_create_job()
+    from ckdn import _win32  # imported here: its own imports need Windows
+
+    job = _win32.create_job()
     assert job is not None, "CreateJobObject / SetInformationJobObject failed"
 
     child = subprocess.Popen(
@@ -655,13 +668,54 @@ def test_a_job_object_really_holds_and_kills_the_child() -> None:
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
     )
     try:
-        assert _win_assign_job(job, child.pid) is True, (
+        assert _win32.assign_job(job, child.pid) is True, (
             "AssignProcessToJobObject failed"
         )
-        assert _pid_alive(child.pid) is True
-        _win_close(job)  # the kill is the handle going away
+        assert _win32.pid_alive(child.pid) is True
+        _win32.close(job)  # the kill is the handle going away
         assert _wait_dead(child.pid), "KILL_ON_JOB_CLOSE did not take the child"
     finally:
         with contextlib.suppress(OSError):
             child.kill()
         child.wait()
+
+
+def test_the_spawn_seam_puts_the_child_in_a_job_and_uses_it(tmp_path: Path) -> None:
+    """The wiring, not the mechanism.
+
+    The Win32 test above passes even if production never creates a job —
+    every step falls back to `taskkill`, so deleting the `setattr` or the
+    `_win_close` would leave the suite green. This drives the real seam:
+    spawn, attach, terminate, and check that the job was both attached and
+    handed back, and that a re-parented grandchild went with it.
+    """
+    if sys.platform != "win32":
+        pytest.skip("Windows job objects")
+
+    from ckdn import _win32
+
+    log = tmp_path / "full.log"
+    with log.open("wb") as handle:
+        proc = _spawn(
+            [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, handle, None
+        )
+    _win32.attach_job(proc)
+    try:
+        assert getattr(proc, "_ckdn_win_job", None) is not None, (
+            "the spawn seam did not put the child in a job"
+        )
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not log.read_bytes().strip():
+            time.sleep(0.05)
+        grandchild = int(log.read_text().strip())
+
+        terminate_tree(proc)
+
+        assert not hasattr(proc, "_ckdn_win_job"), (
+            "the job record must be detached, or a second stop double-closes it"
+        )
+        assert _wait_dead(grandchild), "the job did not take the grandchild"
+    finally:
+        with contextlib.suppress(OSError):
+            proc.kill()
+        proc.wait()

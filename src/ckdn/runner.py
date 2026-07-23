@@ -14,11 +14,12 @@ Process-lifecycle rules (a hung child must never hang ckdn):
   descendant, so draining it blocks until *all* of them exit -- killing the
   direct child is not enough and the parent deadlocks. Writing to a file also
   means an interrupted run still leaves partial evidence on disk.
-* The child starts in its own process group/session, so the whole tree
-  (``uv`` -> ``pytest`` -> workers) can be signalled as a unit.
-* On timeout, on ``SIGINT``, and on any other exception the group is
-  terminated: ``SIGTERM`` -> grace period -> ``SIGKILL``. Nothing is left
-  running behind ckdn.
+* The child is detached into its own process group (POSIX) or held in a job
+  object (Windows), so the whole tree (``uv`` -> ``pytest`` -> workers) can be
+  stopped as a unit even after the wrapper that started it has exited.
+* On timeout, on ``SIGINT``, on a clean exit and on any other path the tree is
+  asked to stop, given a grace period, then terminated. What survives that is
+  documented in ``docs/status-model.md`` rather than assumed away.
 """
 
 from __future__ import annotations
@@ -54,21 +55,6 @@ TERM_GRACE_SECONDS = 5.0
 #: How often a wait wakes up to notice Ctrl-C or a dead process group.
 POLL_SECONDS = 0.05
 EMPTY_LOG_SHA256 = hashlib.sha256(b"").hexdigest()
-#: `os.kill` raises OverflowError, not OSError, for a pid wider than a C
-#: int -- no caller can be expected to catch that, so refuse it up front.
-_MAX_PID = 2**31 - 1
-#: Windows `OpenProcess` failure that means "it exists, but not for you".
-_ERROR_ACCESS_DENIED = 5
-#: Win32 constants for holding and stopping the child's tree.
-_JOB_EXTENDED_LIMIT_INFORMATION = 9
-_JOB_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-_PROCESS_SET_QUOTA = 0x0100
-_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-_STILL_ACTIVE = 259
-_PROCESS_TERMINATE = 0x0001
-_CTRL_BREAK_EVENT = 1
-#: Where the child's job handle is parked, so `terminate_tree` can find it.
-_WIN_JOB_ATTR = "_ckdn_win_job"
 
 
 @dataclass(frozen=True)
@@ -153,177 +139,14 @@ def _terminate_tree_posix(proc: subprocess.Popen[bytes], grace: float) -> None:
     _terminate_group(proc, pgid, grace)
 
 
-def _win_kernel32() -> Any:  # pragma: no cover - Windows CI
-    """None off Windows: the check narrows the platform for type checkers,
-    which analyse this file on POSIX where `ctypes.WinDLL` does not exist."""
-    if sys.platform != "win32":
+def _win32() -> Any:
+    """The Win32 layer, imported only where its own imports resolve."""
+    if sys.platform != "win32":  # pragma: no cover - POSIX
         return None
 
-    import ctypes
+    from ckdn import _win32 as module
 
-    return ctypes.WinDLL("kernel32", use_last_error=True)
-
-
-def _win_open_process(pid: int, access: int) -> int:  # pragma: no cover - Windows CI
-    """A handle for `pid`, or 0. The caller closes it with `_win_close`."""
-    if sys.platform != "win32":
-        return 0
-
-    from ctypes import wintypes
-
-    kernel32 = _win_kernel32()
-    # Without an explicit restype ctypes truncates the handle to a C int,
-    # which silently corrupts 64-bit handles.
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    return int(kernel32.OpenProcess(access, False, wintypes.DWORD(pid)) or 0)
-
-
-def _win_close(handle: int) -> None:  # pragma: no cover - Windows CI
-    """Release a handle. For a job this *is* the kill: KILL_ON_JOB_CLOSE."""
-    if sys.platform != "win32":
-        return
-
-    from ctypes import wintypes
-
-    with contextlib.suppress(OSError):
-        _win_kernel32().CloseHandle(wintypes.HANDLE(handle))
-
-
-def _win_create_job() -> int | None:  # pragma: no cover - Windows CI
-    """A job object that kills its members when the last handle closes.
-
-    Windows has no process group that survives re-parenting, so ``taskkill
-    /T`` -- which walks parent links -- misses a grandchild whose parent
-    already exited. A job holds every descendant regardless of parentage, and
-    ``KILL_ON_JOB_CLOSE`` means the tree goes even when ckdn is killed outright
-    and no cleanup of ours runs at all.
-    """
-    if sys.platform != "win32":
-        return None
-
-    import ctypes
-    from ctypes import wintypes
-
-    class _IoCounters(ctypes.Structure):
-        _fields_ = [
-            (name, ctypes.c_ulonglong)
-            for name in (
-                "ReadOperationCount",
-                "WriteOperationCount",
-                "OtherOperationCount",
-                "ReadTransferCount",
-                "WriteTransferCount",
-                "OtherTransferCount",
-            )
-        ]
-
-    class _BasicLimits(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
-            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class _ExtendedLimits(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", _BasicLimits),
-            ("IoInfo", _IoCounters),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    kernel32 = _win_kernel32()
-    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
-        return None
-
-    info = _ExtendedLimits()
-    info.BasicLimitInformation.LimitFlags = _JOB_LIMIT_KILL_ON_JOB_CLOSE
-    ok = kernel32.SetInformationJobObject(
-        wintypes.HANDLE(job),
-        _JOB_EXTENDED_LIMIT_INFORMATION,
-        ctypes.byref(info),
-        ctypes.sizeof(info),
-    )
-    if not ok:
-        kernel32.CloseHandle(wintypes.HANDLE(job))
-        return None
-    return int(job)
-
-
-def _win_assign_job(job: int, pid: int) -> bool:  # pragma: no cover - Windows CI
-    """Put the child in the job. A child that already exited cannot be."""
-    if sys.platform != "win32":
-        return False
-
-    from ctypes import wintypes
-
-    handle = _win_open_process(pid, _PROCESS_SET_QUOTA | _PROCESS_TERMINATE)
-    if not handle:
-        return False
-    try:
-        return bool(
-            _win_kernel32().AssignProcessToJobObject(
-                wintypes.HANDLE(job), wintypes.HANDLE(handle)
-            )
-        )
-    finally:
-        _win_close(handle)
-
-
-def _win_break_group(pid: int) -> bool:  # pragma: no cover - Windows CI
-    """Ask the child's console group to stop -- the closest thing to SIGTERM.
-
-    The child leads its own group (``CREATE_NEW_PROCESS_GROUP``), so the event
-    reaches it and its descendants. It fails when there is no console at all,
-    which is exactly when there is nothing graceful to attempt anyway.
-    """
-    if sys.platform != "win32":
-        return False
-    from ctypes import wintypes
-
-    kernel32 = _win_kernel32()
-    return bool(
-        kernel32.GenerateConsoleCtrlEvent(_CTRL_BREAK_EVENT, wintypes.DWORD(pid))
-    )
-
-
-def _terminate_tree_windows(
-    proc: subprocess.Popen[bytes], grace: float
-) -> None:  # pragma: no cover - Windows CI
-    """Mirror the POSIX contract: ask nicely, wait, then take the whole tree.
-
-    ``CTRL_BREAK`` stands in for ``SIGTERM`` and the job for the process
-    group. Without the job this could only be ``taskkill``, which is both
-    unconditional and blind to re-parenting -- so where the job is
-    unavailable, that is what happens, and the grace period is the only part
-    still honoured.
-    """
-    _win_break_group(proc.pid)
-    deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and _pid_alive(proc.pid):
-        time.sleep(POLL_SECONDS)
-
-    job = getattr(proc, _WIN_JOB_ATTR, None)
-    if job is None:
-        subprocess.run(
-            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-            capture_output=True,
-            check=False,
-        )
-        return
-    _win_close(job)
-    with contextlib.suppress(AttributeError):
-        delattr(proc, _WIN_JOB_ATTR)
+    return module
 
 
 def terminate_tree(
@@ -336,7 +159,7 @@ def terminate_tree(
     the run's real outcome.
     """
     if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
-        _terminate_tree_windows(proc, grace)
+        _win32().terminate_tree(proc, grace, POLL_SECONDS)
     else:
         _terminate_tree_posix(proc, grace)
     with contextlib.suppress(subprocess.TimeoutExpired, OSError, ValueError):
@@ -345,53 +168,6 @@ def terminate_tree(
 
 class RunLockError(RuntimeError):
     """Another live process already runs this check in this runs directory."""
-
-
-def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
-    """Ask the kernel directly; ``os.kill(pid, 0)`` is not usable here.
-
-    On Windows a dead pid makes ``os.kill(pid, 0)`` raise a bare ``OSError``
-    (``WinError 87``), indistinguishable from a real error -- and a pid that
-    does not fit a C int raises ``OverflowError``, which is not an ``OSError``
-    at all.
-    """
-    if sys.platform != "win32":
-        return False
-
-    import ctypes
-    from ctypes import wintypes
-
-    handle = _win_open_process(pid, _PROCESS_QUERY_LIMITED_INFORMATION)
-    if not handle:
-        # ACCESS_DENIED means the process exists and simply is not ours to
-        # query -- the POSIX branch answers "alive" for exactly that case, and
-        # calling it dead would be the one error worth avoiding here.
-        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
-    try:
-        code = wintypes.DWORD()
-        if not _win_kernel32().GetExitCodeProcess(
-            wintypes.HANDLE(handle), ctypes.byref(code)
-        ):
-            return False
-        # A process that really exits with 259 is misread as alive; that is the
-        # accepted ambiguity of this API, and it only delays reclaiming a lock.
-        return bool(code.value == _STILL_ACTIVE)
-    finally:
-        _win_close(handle)
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0 or pid > _MAX_PID:
-        return False
-    if sys.platform == "win32":  # pragma: no cover - Windows CI
-        return _pid_alive_windows(pid)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, simply not ours to signal
-    return True
 
 
 def _lock_path(runs_dir: Path, check: str) -> Path:
@@ -539,15 +315,6 @@ def _spawn(
         start_new_session=sys.platform != "win32",
         creationflags=creationflags,
     )
-    if sys.platform == "win32":  # pragma: no cover - Windows CI
-        # Best effort: without the job we still have taskkill, which is what
-        # this replaces precisely because it cannot see a re-parented child.
-        job = _win_create_job()
-        if job is not None:
-            if _win_assign_job(job, proc.pid):
-                setattr(proc, _WIN_JOB_ATTR, job)
-            else:
-                _win_close(job)
     return proc
 
 
@@ -639,7 +406,19 @@ def execute(
                     rc=RC_NOT_FOUND, note=f"failed to start command: {exc}"
                 )
             else:
+                if sys.platform == "win32":  # pragma: no cover - Windows CI
+                    _win32().attach_job(proc)
                 ending = _await_child(proc, timeout)
+    except KeyboardInterrupt:
+        # Ctrl-C outside the wait -- while the log file is opened, or while
+        # the child is being put in its job. The `finally` below still stops
+        # the tree, and the run still reports an interrupt with its evidence
+        # rather than escaping with no outcome at all.
+        ending = _Ending(
+            rc=RC_INTERRUPTED,
+            interrupted=True,
+            note="run interrupted while starting the command",
+        )
     finally:
         # On every path, including a clean exit: a check that leaves a
         # background process behind would otherwise keep writing into a log
