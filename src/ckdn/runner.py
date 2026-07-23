@@ -155,8 +155,10 @@ def terminate_tree(
     """Terminate every process the run started, not just the direct child.
 
     Safe to call whether or not the child is still alive -- descendants
-    routinely outlive it. Never raises: a tree we cannot signal must not mask
-    the run's real outcome.
+    routinely outlive it. Raises nothing of its own: a tree we cannot signal
+    must not mask the run's real outcome. A Ctrl-C arriving during the grace
+    does propagate, and the tree is taken down before it does -- absorbing it
+    is the caller's job.
     """
     if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
         _win32().terminate_tree(proc, grace, POLL_SECONDS)

@@ -684,14 +684,27 @@ def test_a_job_object_really_holds_and_kills_the_child() -> None:
         child.wait()
 
 
+# Windows: the parent exits at once, so the grandchild is re-parented out of
+# `taskkill`'s reach, and the grandchild ignores CTRL_BREAK so the console
+# event cannot account for its death either. Only job membership can.
+_WIN_DEAF_ORPHAN = (
+    "import subprocess,sys,time;"
+    "p=subprocess.Popen([sys.executable,'-c',"
+    '"import signal,time;signal.signal(signal.SIGBREAK,signal.SIG_IGN);"'
+    '"time.sleep(60)"]);'
+    "sys.stdout.write(str(p.pid));sys.stdout.flush();"
+    "time.sleep(1)"
+)
+
+
 def test_the_spawn_seam_puts_the_child_in_a_job_and_uses_it(tmp_path: Path) -> None:
-    """The wiring, not the mechanism.
+    """The wiring, and that the job is what does the work.
 
     The Win32 test above passes even if production never creates a job —
     every step falls back to `taskkill`, so deleting the `setattr` or the
-    `_win_close` would leave the suite green. This drives the real seam:
-    spawn, attach, terminate, and check that the job was both attached and
-    handed back, and that a re-parented grandchild went with it.
+    `close` would leave the suite green. This drives the real seam and picks
+    a victim neither fallback can explain: an orphaned grandchild, deaf to
+    CTRL_BREAK. If it dies, it died because the job took it.
     """
     if sys.platform != "win32":
         pytest.skip("Windows job objects")
@@ -700,9 +713,7 @@ def test_the_spawn_seam_puts_the_child_in_a_job_and_uses_it(tmp_path: Path) -> N
 
     log = tmp_path / "full.log"
     with log.open("wb") as handle:
-        proc = _spawn(
-            [sys.executable, "-c", _SPAWNS_GRANDCHILD], tmp_path, handle, None
-        )
+        proc = _spawn([sys.executable, "-c", _WIN_DEAF_ORPHAN], tmp_path, handle, None)
     _win32.attach_job(proc)
     try:
         assert getattr(proc, "_ckdn_win_job", None) is not None, (
@@ -712,13 +723,17 @@ def test_the_spawn_seam_puts_the_child_in_a_job_and_uses_it(tmp_path: Path) -> N
         while time.monotonic() < deadline and not log.read_bytes().strip():
             time.sleep(0.05)
         grandchild = int(log.read_text().strip())
+        proc.wait(timeout=20)  # the parent goes, orphaning the grandchild
 
         terminate_tree(proc)
 
         assert not hasattr(proc, "_ckdn_win_job"), (
             "the job record must be detached, or a second stop double-closes it"
         )
-        assert _wait_dead(grandchild), "the job did not take the grandchild"
+        assert _wait_dead(grandchild), (
+            "an orphaned, CTRL_BREAK-deaf grandchild survived — the job is not "
+            "holding the tree"
+        )
     finally:
         with contextlib.suppress(OSError):
             proc.kill()

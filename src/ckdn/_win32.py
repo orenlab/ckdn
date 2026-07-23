@@ -240,12 +240,15 @@ def _tree_alive(proc: subprocess.Popen[bytes], job: int | None) -> bool:
     tool it launched is still writing its report, so the wait would end at
     once and the job close would take that tool mid-write -- a zero-length
     grace, and a digest that differs from the POSIX one for the same timeout.
+
+    An unanswerable job counts as alive for the same reason. Falling back to
+    the child when the query fails would restore exactly that collapse; the
+    cost of being wrong the other way is waiting out a grace nobody needed.
     """
-    if job is not None:
-        active = job_active(job)
-        if active is not None:
-            return active > 0
-    return pid_alive(proc.pid)
+    if job is None:
+        return pid_alive(proc.pid)
+    active = job_active(job)
+    return True if active is None else active > 0
 
 
 def terminate_tree(
@@ -257,32 +260,37 @@ def terminate_tree(
     group. The ask only reaches a tool that installs a handler for it -- the
     default one exits the process at once -- so this buys a shutdown window
     for tools that want one, not for every tool.
+
+    The kill happens in a ``finally`` because the grace is exactly where a
+    second Ctrl-C lands. Returning through that exception without closing the
+    job leaked the handle, left ``KILL_ON_JOB_CLOSE`` unfired, and sent the
+    retry down the ``taskkill`` path -- losing the re-parented descendants the
+    job exists to hold, on the one path the caller built for impatience.
     """
-    # Detach the record first: a second Ctrl-C between the close and the
-    # delete would otherwise close the same handle twice, and in the MCP
-    # server's thread pool that slot may already belong to someone else.
+    # Detached up front so a second stop cannot close the same handle twice;
+    # the `finally` below is what guarantees this one still gets closed.
     job = getattr(proc, JOB_ATTR, None)
     if job is not None:
         delattr(proc, JOB_ATTR)
 
-    if break_group(proc.pid):
-        # Only wait when the ask was delivered. A process with no console --
-        # an MCP host, a service -- can never receive it, and waiting anyway
-        # would add a dead grace period to every single stop.
-        deadline = time.monotonic() + grace
-        while time.monotonic() < deadline:
-            if not _tree_alive(proc, job):
-                break
-            time.sleep(poll_seconds)
-
-    if job is not None:
-        close(job)  # KILL_ON_JOB_CLOSE takes whatever is still in it
-        return
-    if pid_alive(proc.pid):
-        # Without a job there is only this. Skipped when the child is already
-        # gone, so the second call from `execute`'s finally costs nothing.
-        subprocess.run(
-            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-            capture_output=True,
-            check=False,
-        )
+    try:
+        if break_group(proc.pid):
+            # Only wait when the ask was delivered. A process with no console
+            # -- an MCP host, a service -- can never receive it, and waiting
+            # anyway would add a dead grace period to every single stop.
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline:
+                if not _tree_alive(proc, job):
+                    break
+                time.sleep(poll_seconds)
+    finally:
+        if job is not None:
+            close(job)  # KILL_ON_JOB_CLOSE takes whatever is still in it
+        elif pid_alive(proc.pid):
+            # Without a job there is only this. Skipped when the child is
+            # already gone, so a second call costs nothing.
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+            )
