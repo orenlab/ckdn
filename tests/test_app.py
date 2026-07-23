@@ -709,6 +709,25 @@ def test_ctrl_c_while_parsing_still_leaves_a_digest(
     )
 
 
+def _interrupt_the_first_finalize(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Raise KeyboardInterrupt once inside the protected finalize step.
+
+    `_annotate_baseline` sits between building the digest and writing it, and
+    is a no-op when no baseline is configured — so standing in for it
+    interrupts exactly that window without changing the result. Returns the
+    call log, so a test can prove the step was retried and not abandoned.
+    """
+    calls: list[int] = []
+
+    def _interrupt_once(*_args: object) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(app_run, "_annotate_baseline", _interrupt_once)
+    return calls
+
+
 def test_ctrl_c_between_parsing_and_the_write_still_leaves_a_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -718,19 +737,30 @@ def test_ctrl_c_between_parsing_and_the_write_still_leaves_a_digest(
     log and no digest — the same symptom one stage earlier.
     """
     cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
-    calls: list[int] = []
+    calls = _interrupt_the_first_finalize(monkeypatch)
 
-    # `_annotate_baseline` sits between building the digest and writing it,
-    # and is a no-op when no baseline is configured — so standing in for it
-    # interrupts exactly that window without changing the result.
-    def _interrupt_once(*_args: object) -> None:
-        calls.append(1)
-        if len(calls) == 1:
-            raise KeyboardInterrupt
-
-    monkeypatch.setattr(app_run, "_annotate_baseline", _interrupt_once)
     result = run_one(cfg, cfg.checks["ok"], extra=[])
 
     assert len(calls) == 2, "the protected step must be retried, not abandoned"
     assert (result.run_dir / DIGEST_NAME).exists()
     assert (result.run_dir / META_NAME).exists()
+
+
+def test_a_late_ctrl_c_does_not_rewrite_a_finished_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first Ctrl-C arrives once the check has already finished.
+
+    It is absorbed rather than honoured: by this point only the paperwork is
+    left, and the run reports what the check actually did. Pinned because it
+    is a deliberate trade, not an accident — a green run still exits 0.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    _interrupt_the_first_finalize(monkeypatch)
+
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert result.status == "pass"
+    assert result.exit_code == 0
+    assert result.digest.get("interrupted") is None
+    assert (result.run_dir / DIGEST_NAME).exists()

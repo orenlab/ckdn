@@ -106,8 +106,15 @@ def _uninterruptible(step: Callable[[], _T]) -> _T:
 
     An empty run directory is the exact symptom of the incident this whole
     path exists to prevent, so the retry runs with SIGINT held off rather
-    than racing another keypress. Nothing is swallowed that matters: the
-    outcome already records the interrupt, and the run exits 130 either way.
+    than racing another keypress.
+
+    A Ctrl-C is therefore absorbed here. Where the run was already cut short
+    it changes nothing — the outcome records that and the run exits 130. But
+    a *first* Ctrl-C arriving during this step, on a check that ran to
+    completion, is dropped: the run reports what the check actually did, and
+    a green one still exits 0. That is the deliberate trade — by this point
+    the work is done and only the paperwork is left, and a finished result is
+    worth more than honouring a keypress that arrived after it.
 
     ``step`` must be idempotent — it is rebuilt from the same inputs and the
     documents it writes are overwritten wholesale.
