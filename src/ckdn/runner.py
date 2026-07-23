@@ -162,7 +162,7 @@ def terminate_tree(
         _win32().terminate_tree(proc, grace, POLL_SECONDS)
     else:
         _terminate_tree_posix(proc, grace)
-    with contextlib.suppress(subprocess.TimeoutExpired, OSError, ValueError):
+    with contextlib.suppress(subprocess.TimeoutExpired, OSError):
         proc.wait(timeout=grace)
 
 

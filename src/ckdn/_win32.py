@@ -18,6 +18,11 @@ design. A module that is only ever imported on Windows needs none of them.
 Everything is best effort. Any call that fails returns a value the caller can
 act on, and :func:`terminate_tree` falls back to ``taskkill`` -- worse, but
 what ckdn did before jobs existed.
+
+The type checkers do not read this module (they run where its imports do not
+resolve), so the ``int()`` and ``bool()`` around raw ctypes results are the
+only thing keeping the annotations here honest. They are load-bearing at that
+boundary and pointless anywhere else.
 """
 
 from __future__ import annotations
@@ -100,7 +105,7 @@ def pid_alive(pid: int) -> bool:
         # this API's accepted ambiguity. The cost is a delayed `taskkill`
         # in the jobless branch -- locks stopped depending on pid liveness
         # when they became file locks.
-        return bool(code.value == STILL_ACTIVE)
+        return code.value == STILL_ACTIVE
     finally:
         close(handle)
 
@@ -185,7 +190,7 @@ def job_active(job: int) -> int | None:
         None,
     ):
         return None
-    return int(ctypes.c_uint32.from_buffer(buffer, ACTIVE_PROCESSES_OFFSET).value)
+    return ctypes.c_uint32.from_buffer(buffer, ACTIVE_PROCESSES_OFFSET).value
 
 
 def break_group(pid: int) -> bool:
@@ -258,8 +263,7 @@ def terminate_tree(
     # server's thread pool that slot may already belong to someone else.
     job = getattr(proc, JOB_ATTR, None)
     if job is not None:
-        with contextlib.suppress(AttributeError):
-            delattr(proc, JOB_ATTR)
+        delattr(proc, JOB_ATTR)
 
     if break_group(proc.pid):
         # Only wait when the ask was delivered. A process with no console --

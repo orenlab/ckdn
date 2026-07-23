@@ -155,7 +155,7 @@ def _alive(pid: int) -> bool:
     if sys.platform == "win32":
         from ckdn import _win32
 
-        return bool(_win32.pid_alive(pid))
+        return _win32.pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

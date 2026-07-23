@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2026-07-22
+## [1.3.0] - 2026-07-23
 
 ### Added
 
@@ -46,8 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a rooted `/etc/...` path to the drive root, outside the workspace), so those
   tests no longer skip; the app/MCP tests isolate `execute` on every OS (real
   subprocess execution stays covered by `test_runner` via `sys.executable`).
-  Only the real-symlink test remains POSIX-only (Windows symlinks need
-  privilege; the `LATEST` marker fallback is covered separately)
+  Three tests stay POSIX-only — real symlinks (they need privilege on
+  Windows, and the `LATEST` marker fallback is covered separately) and two
+  that assert POSIX signal semantics, whose Windows counterparts are tested
+  on their own terms
 
 ### Fixed
 
