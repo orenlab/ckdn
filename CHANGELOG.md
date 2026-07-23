@@ -9,8 +9,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [1.3.0] - 2026-07-22
 
 ### Added
@@ -50,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subprocess execution stays covered by `test_runner` via `sys.executable`).
   Only the real-symlink test remains POSIX-only (Windows symlinks need
   privilege; the `LATEST` marker fallback is covered separately)
+
+### Fixed
+
+- **Critical: a hung check could hang the whole machine.** The log streams to
+  `full.log` instead of a pipe, and the child's whole process group is
+  terminated on timeout, on Ctrl-C and on a clean exit
+- Ctrl-C reports `rc=130` and always leaves evidence; timeouts and interrupts
+  reconcile to `error`, and an alias exits `130`
+- New `interrupted` field on digest, aggregate and `meta.json`. The packaged
+  schemas are closed — re-export with `ckdn schema` if you pinned the 1.2.0
+  copies
+- Run locks are kernel file locks: no double runs, no wedging on a stale pid
+- `meta.json`'s `log_sha256` / `log_bytes` match `full.log` on disk
+- `ckdn baseline` refuses an interrupted or untrusted run
+- `prune` skips runs that have no digest yet
+- A refused start exits `2` with a message, not a traceback and exit `1`
+- `latest` is published atomically
 
 ## [1.2.0] - 2026-07-21
 

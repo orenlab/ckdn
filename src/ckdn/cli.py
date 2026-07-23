@@ -48,7 +48,7 @@ from ckdn.config import (
 from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
 from ckdn.preflight import diagnose
-from ckdn.runner import prune
+from ckdn.runner import RC_INTERRUPTED, prune
 from ckdn.schema import load_schema, schema_ids
 
 
@@ -207,6 +207,20 @@ def cmd_baseline(args: argparse.Namespace) -> int:
             target, options={**target.options, "top": 1_000_000_000}
         )
         result = app_run_one(cfg, uncapped, extra=[])
+        if result.digest.get("interrupted"):
+            return _fail(
+                f"'{target.name}' was interrupted; its findings are partial and "
+                "recording them would accept the backlog that did not run yet. "
+                f"{baseline_path} is unchanged"
+            )
+        if result.status in {"error", "parse_mismatch"}:
+            # The same rule the gate applies: an untrusted result is no basis
+            # for accepting findings. Recording an empty set here would mark
+            # every existing finding "new" on the next run.
+            return _fail(
+                f"'{target.name}' finished {result.status} — its findings are "
+                f"not trustworthy enough to accept. {baseline_path} is unchanged"
+            )
         fingerprints = baseline.fingerprints_for(
             target.name, result.digest.get("findings", [])
         )
@@ -448,6 +462,17 @@ def main(argv: list[str] | None = None) -> int:
         return handler(args)
     except ConfigError as exc:
         return _fail(str(exc))
+    except AppError as exc:
+        # Every command, not just the ones that wrap their own call. A run
+        # lock conflict on `run --all` used to reach here as a traceback and
+        # exit 1 -- the code that means "this check is red", so CI could not
+        # tell a refused start from a real failure.
+        return _fail(str(exc))
+    except KeyboardInterrupt:
+        # Safety net: `execute` already terminates the process tree and writes
+        # evidence, so this only covers an interrupt outside a running check.
+        print("ckdn: interrupted", file=sys.stderr)
+        return RC_INTERRUPTED
     except BrokenPipeError:
         # stdout piped into head/less and closed early; not an error.
         with contextlib.suppress(OSError):

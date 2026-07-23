@@ -14,6 +14,7 @@
     "run_dir": {"type": "string", "minLength": 1},
     "status_reason": {"type": "string"},
     "timed_out": {"const": true},
+    "interrupted": {"const": true},
     "summary": {"type": "object"},
     "gate_failures": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "notes": {"type": "array", "items": {"type": "string"}, "minItems": 1},

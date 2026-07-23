@@ -14,6 +14,8 @@ import pytest
 
 from ckdn import cli
 from ckdn.app import run as app_run
+from ckdn.app.errors import AppError
+from ckdn.app.types import AtomicRunResult
 from ckdn.config import CONFIG_NAME, STARTER_CONFIG, load_config
 from ckdn.digest import DIGEST_NAME
 from ckdn.parsers.base import ParseResult
@@ -182,7 +184,12 @@ def test_exec_note_prepended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     rc = cli.main(["run", "--config", str(cfg), "ok", "--quiet"])
     assert rc == 127
     runs = tmp_path / "runs"
-    latest = next(p for p in runs.iterdir() if p.is_dir() and not p.is_symlink())
+    # `.locks` also lives under runs_dir; a run dir is never dot-prefixed.
+    latest = next(
+        p
+        for p in runs.iterdir()
+        if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+    )
     doc = json.loads((latest / DIGEST_NAME).read_text(encoding="utf-8"))
     assert doc["notes"][0].startswith("command not found")
 
@@ -390,3 +397,66 @@ def test_list_json(tmp_path: Path, stub_execute: None, capsys: Any) -> None:
     assert set(doc) == {"runs"}
     last = doc["runs"][-1]
     assert last["check"] == "ok" and last["status"] == "pass"
+
+
+def test_app_error_is_a_message_and_exit_2_not_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused start is not a red check.
+
+    `run --all` let AppError escape as a traceback and exit 1 — the code that
+    means "this check failed" — so CI could not tell a lock conflict from a
+    genuine failure.
+    """
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+
+    def _refuse(*_a: object, **_k: object) -> None:
+        raise AppError("check 'ok' is already running in this workspace")
+
+    monkeypatch.setattr("ckdn.cli.run_all", _refuse)
+    rc = cli.main(["run", "--all", "--config", str(cfg)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ckdn: ")
+    assert "already running" in err
+
+
+def test_baseline_refuses_to_record_an_interrupted_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C during `ckdn baseline` used to be silently accepted.
+
+    The partial findings overwrote the accepted set and the command exited 0,
+    so the next gate announced the entire old backlog as new.
+    """
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(
+        '{"version": 1, "checks": {"ok": ["deadbeef"]}}', encoding="utf-8"
+    )
+    cfg = tmp_path / "ckdn.toml"
+    cfg.write_text(
+        '[run]\nruns_dir = "runs"\nbaseline = "baseline.json"\n\n'
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+    before = baseline_path.read_text(encoding="utf-8")
+
+    def _interrupted(*_a: object, **_k: object) -> AtomicRunResult:
+        return AtomicRunResult(
+            check="ok",
+            status="error",
+            rc=130,
+            run_dir=tmp_path / "runs" / "x",
+            digest={"check": "ok", "interrupted": True, "findings": []},
+            exit_code=130,
+        )
+
+    monkeypatch.setattr("ckdn.cli.app_run_one", _interrupted)
+    rc = cli.main(["baseline", "ok", "--config", str(cfg)])
+
+    assert rc == 2
+    assert "interrupted" in capsys.readouterr().err
+    assert baseline_path.read_text(encoding="utf-8") == before, (
+        "a partial run must not overwrite the accepted findings"
+    )

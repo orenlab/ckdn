@@ -4,10 +4,31 @@
 
 from ckdn.parsers.base import Finding, ParseResult
 from ckdn.reconcile import reconcile
+from ckdn.runner import RC_INTERRUPTED, RC_TIMEOUT
 
 
 def _finding() -> Finding:
     return Finding(id="tests.test_x::test_y", kind="test_failure", message="boom")
+
+
+def test_interrupted_outranks_every_other_signal() -> None:
+    """Partial evidence from a cut-short run is never a verdict."""
+    # a half-written report must not read as `fail`
+    status, reason, tail = reconcile(
+        1, ParseResult(findings=[_finding()]), interrupted=True
+    )
+    assert status == "error" and "interrupted" in reason and tail is True
+    # nor as `parse_mismatch` when the parser could not read the partial file
+    assert reconcile(0, ParseResult(parser_ok=False), interrupted=True)[0] == "error"
+    # nor as a gate failure
+    assert (
+        reconcile(0, ParseResult(gate_failures=["coverage too low"]), interrupted=True)[
+            0
+        ]
+        == "error"
+    )
+    # and it is never green
+    assert reconcile(0, ParseResult(), interrupted=True)[0] == "error"
 
 
 def test_green_requires_rc_zero_and_clean_parse() -> None:
@@ -59,3 +80,28 @@ def test_generic_checks_fail_without_evidence() -> None:
     status, _, tail = reconcile(3, ParseResult(evidence_expected=False))
     assert status == "fail"
     assert tail is True
+
+
+def test_timeout_is_error_not_a_verdict() -> None:
+    """A killed tool's findings describe the moment it died, not the code.
+
+    rc=124 with gate failures used to read as `fail` — a verdict drawn from
+    evidence that was cut off mid-write, and the opposite of what the status
+    model documents.
+    """
+    status, reason, tail = reconcile(
+        RC_TIMEOUT,
+        ParseResult(gate_failures=["line coverage 12.0% is below fail_under=95.0%"]),
+        timed_out=True,
+    )
+    assert status == "error"
+    assert "timed out" in reason
+    assert tail is True
+
+
+def test_interruption_still_outranks_a_timeout() -> None:
+    status, reason, _ = reconcile(
+        RC_INTERRUPTED, ParseResult(), interrupted=True, timed_out=True
+    )
+    assert status == "error"
+    assert "interrupted" in reason

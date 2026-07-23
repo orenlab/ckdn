@@ -26,11 +26,13 @@ from ckdn.app import (
     run_check,
     run_one,
 )
+from ckdn.app import run as app_run
 from ckdn.config import Config, load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
 from ckdn.runner import (
     LOG_NAME,
     RunOutcome,
+    _lock_path,
     create_run_dir,
     resolve_run_dir,
     update_latest,
@@ -104,6 +106,27 @@ def test_run_one_and_digest_roundtrip(tmp_path: Path) -> None:
     loaded = get_digest(cfg)
     assert loaded["check"] == "ok"
     assert loaded["status"] == "pass"
+
+
+def test_reclaimed_lock_is_reported_without_changing_the_verdict(
+    tmp_path: Path,
+) -> None:
+    """A lock left by a crashed run is evidence about the *previous* run.
+
+    It says nothing about this one, so it lands in notes and the status stays
+    exactly what the exit code earned.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    lock = _lock_path(cfg.runs_dir, "ok")
+    lock.parent.mkdir(parents=True)
+    lock.write_text("ckdn pid 4242", encoding="utf-8")  # killed before releasing
+
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert result.status == "pass"  # the warning must not downgrade a green run
+    assert result.exit_code == 0
+    assert any("did not exit cleanly" in note for note in result.digest["notes"])
+    assert lock.read_text(encoding="utf-8") == "", "this run released it cleanly"
 
 
 def test_digest_run_dir_uses_posix_separators(tmp_path: Path) -> None:
@@ -601,3 +624,143 @@ def test_run_one_run_dir_outside_root(
     assert result.digest["run_dir"] == outside.as_posix()
     # Absolute path proves relative_to(cfg.root) fell back.
     assert result.digest["run_dir"].startswith(tmp_path.parent.as_posix())
+
+
+def _outcome_for(
+    run_dir: Path, tokens: list[str], rc: int, *, interrupted: bool
+) -> RunOutcome:
+    (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+    return RunOutcome(
+        run_dir=run_dir,
+        tokens=tokens,
+        rc=rc,
+        log_text="",
+        started_at="2026-01-01T00:00:00+00:00",
+        duration_s=0.0,
+        timed_out=False,
+        exec_note=None,
+        interrupted=interrupted,
+    )
+
+
+def test_interruption_outranks_an_earlier_red_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ruff` fails, then Ctrl-C stops `pytest`.
+
+    The aggregate used to pass through the first non-zero rc, so the series
+    exited 1 — the code that means "a check is red" — while the CHANGELOG
+    promised 130, and nothing in the document said the rest never ran.
+    """
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.red]\ncommand = "false"\nparser = "generic"\n'
+        '[check.stopped]\ncommand = "true"\nparser = "generic"\n'
+        '[check.both]\nmembers = ["red", "stopped"]\nfail_fast = false\n',
+    )
+
+    def _fake(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        stopped = tokens[0] == "true"
+        return _outcome_for(run_dir, tokens, 130 if stopped else 1, interrupted=stopped)
+
+    monkeypatch.setattr("ckdn.app.run.execute", _fake)
+    result = run_alias(cfg, cfg.checks["both"])
+
+    assert result.exit_code == 130, "an early red member masked the interruption"
+    assert result.aggregate["interrupted"] is True
+    assert [m["check"] for m in result.aggregate["members"]] == ["red", "stopped"]
+
+
+def test_ctrl_c_while_parsing_still_leaves_a_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The command finished; the interrupt lands before its output is read.
+
+    `except Exception` does not catch KeyboardInterrupt, so this used to
+    abandon the run directory with only `full.log` in it — the empty run
+    directory from the incident, reached by a different door.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+
+    def _interrupt(*_a: object, **_k: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("ckdn.parsers.generic.GenericParser.parse", _interrupt)
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert result.status == "error"
+    assert result.digest["interrupted"] is True
+    assert (result.run_dir / DIGEST_NAME).exists()
+    assert (result.run_dir / META_NAME).exists()
+    assert (result.run_dir / LOG_NAME).exists()
+    # A Ctrl-C is 130 wherever it lands. Asserting only on `interrupted` let
+    # the command's own exit code survive here, so a single `ckdn run` exited
+    # 1 with `rc: 0` in its digest while the status model promised 130.
+    assert result.digest["rc"] == 130
+    assert result.exit_code == 130
+    assert any("had exited 0" in note for note in result.digest["notes"]), (
+        "the command's own exit code must still be recoverable from the run"
+    )
+
+
+def _interrupt_the_first_finalize(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Raise KeyboardInterrupt once inside the protected finalize step.
+
+    `_annotate_baseline` sits between building the digest and writing it, and
+    is a no-op when no baseline is configured — so standing in for it
+    interrupts exactly that window without changing the result. Returns the
+    call log, so a test can prove the step was retried and not abandoned.
+    """
+    calls: list[int] = []
+
+    def _interrupt_once(*_args: object) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(app_run, "_annotate_baseline", _interrupt_once)
+    return calls
+
+
+def test_ctrl_c_between_parsing_and_the_write_still_leaves_a_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The interrupt lands after parsing, while the documents are built.
+
+    Protecting only the write left this window open: the run directory has a
+    log and no digest — the same symptom one stage earlier.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    calls = _interrupt_the_first_finalize(monkeypatch)
+
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert len(calls) == 2, "the protected step must be retried, not abandoned"
+    assert (result.run_dir / DIGEST_NAME).exists()
+    assert (result.run_dir / META_NAME).exists()
+
+
+def test_a_late_ctrl_c_does_not_rewrite_a_finished_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first Ctrl-C arrives once the check has already finished.
+
+    It is absorbed rather than honoured: by this point only the paperwork is
+    left, and the run reports what the check actually did. Pinned because it
+    is a deliberate trade, not an accident — a green run still exits 0.
+    """
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    _interrupt_the_first_finalize(monkeypatch)
+
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+
+    assert result.status == "pass"
+    assert result.exit_code == 0
+    assert result.digest.get("interrupted") is None
+    assert (result.run_dir / DIGEST_NAME).exists()

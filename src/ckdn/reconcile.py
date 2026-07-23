@@ -23,8 +23,35 @@ from ckdn.parsers.base import ParseResult
 STATUSES = ("pass", "fail", "error", "parse_mismatch")
 
 
-def reconcile(rc: int, result: ParseResult) -> tuple[str, str, bool]:
-    """Return ``(status, reason, include_log_tail)``."""
+def reconcile(
+    rc: int,
+    result: ParseResult,
+    *,
+    interrupted: bool = False,
+    timed_out: bool = False,
+) -> tuple[str, str, bool]:
+    """Return ``(status, reason, include_log_tail)``.
+
+    A run that was cut short outranks everything else. It produced partial
+    evidence, and partial evidence must never be read as a verdict: a
+    half-written JUnit file does not make the run ``fail``, and a missing one
+    does not make it ``parse_mismatch`` -- it is an ``error``. That holds
+    however the run was cut short, by SIGINT or by its own timeout; a killed
+    tool's findings describe the moment it died, not the code.
+    """
+    if interrupted:
+        return (
+            "error",
+            "run interrupted before completion; evidence is partial",
+            True,
+        )
+    if timed_out:
+        return (
+            "error",
+            "run timed out before completion; evidence is partial",
+            True,
+        )
+
     if not result.parser_ok:
         if rc == 0:
             return (

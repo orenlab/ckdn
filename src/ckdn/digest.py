@@ -19,17 +19,32 @@ Always present: ``schema``, ``check``, ``status``, ``rc``, ``run_dir``.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from ckdn import AGGREGATE_SCHEMA, DIGEST_SCHEMA, META_SCHEMA, __version__
 from ckdn.parsers.base import ParseResult
-from ckdn.runner import RunOutcome
+from ckdn.runner import DIGEST_NAME, RunOutcome
 
-DIGEST_NAME = "digest.json"
 META_NAME = "meta.json"
+
+# DIGEST_NAME is re-exported: the two artifact names belong together for
+# readers of this module, but the runner owns it so `prune` can tell a
+# finished run from one still being written.
+__all__ = [
+    "DIGEST_NAME",
+    "META_NAME",
+    "build_alias_aggregate",
+    "build_digest",
+    "build_meta",
+    "dump_json",
+    "dump_json_pretty",
+    "list_artifacts",
+    "prune_summary",
+    "tail",
+    "write_documents",
+]
 
 
 def dump_json(data: dict[str, Any]) -> str:
@@ -103,6 +118,9 @@ def build_digest(
         digest["status_reason"] = reason
     if outcome.timed_out:
         digest["timed_out"] = True
+    if outcome.interrupted:
+        # Why the process ended, like timed_out -- not a result of its own.
+        digest["interrupted"] = True
 
     summary = prune_summary(result.summary)
     if isinstance(summary, dict) and summary:
@@ -132,12 +150,18 @@ def build_alias_aggregate(
     results: list[tuple[str, str, int, str]],
     status: str,
     rc: int,
+    interrupted: bool = False,
 ) -> dict[str, Any]:
     """Sparse aggregate for alias stdout (members already have digests on disk).
 
-    ``rc`` mirrors the process exit code (the pass-through of the first
-    non-green member), so the stdout document is self-contained. Each member's
-    ``run_dir`` is the same relative, posix path its own digest reports.
+    ``rc`` mirrors the process exit code, so the stdout document is
+    self-contained. Each member's ``run_dir`` is the same relative, posix path
+    its own digest reports.
+
+    ``interrupted`` marks a series that was cut short. Without it the document
+    is indistinguishable from a series that ran to completion and failed --
+    and the members that never ran are simply absent, which reads as "not
+    reached because of fail_fast" rather than "never attempted".
     """
     members: list[dict[str, Any]] = []
     for check, member_status, member_rc, run_dir in results:
@@ -149,17 +173,23 @@ def build_alias_aggregate(
         if member_status != "pass":
             row["run_dir"] = run_dir
         members.append(row)
-    return {
+    aggregate: dict[str, Any] = {
         "schema": AGGREGATE_SCHEMA,
         "alias": alias,
         "status": status,
         "rc": rc,
         "members": members,
     }
+    if interrupted:
+        aggregate["interrupted"] = True
+    return aggregate
 
 
 def build_meta(*, check: str, parser: str, outcome: RunOutcome) -> dict[str, Any]:
-    log_bytes = outcome.log_text.encode("utf-8", errors="replace")
+    # Both fields describe `full.log` as it sits on disk, so an external
+    # `sha256 full.log` agrees. Re-encoding `log_text` did not: decoding
+    # collapses CRLF, so one Windows-authored newline was enough to make an
+    # independent check report the evidence as tampered with.
     return {
         "schema": META_SCHEMA,
         "ckdn_version": __version__,
@@ -170,8 +200,9 @@ def build_meta(*, check: str, parser: str, outcome: RunOutcome) -> dict[str, Any
         "timed_out": outcome.timed_out,
         "started_at": outcome.started_at,
         "duration_s": outcome.duration_s,
-        "log_sha256": hashlib.sha256(log_bytes).hexdigest(),
-        "log_bytes": len(log_bytes),
+        "log_sha256": outcome.log_sha256,
+        "log_bytes": outcome.log_size,
+        "interrupted": outcome.interrupted,
     }
 
 

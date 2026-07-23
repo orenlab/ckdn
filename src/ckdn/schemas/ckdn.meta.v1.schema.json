@@ -16,19 +16,56 @@
     "started_at",
     "duration_s",
     "log_sha256",
-    "log_bytes"
+    "log_bytes",
+    "interrupted"
   ],
   "properties": {
-    "schema": {"const": "ckdn.meta/1"},
-    "ckdn_version": {"type": "string", "minLength": 1},
-    "check": {"type": "string", "minLength": 1},
-    "parser": {"type": "string", "minLength": 1},
-    "command": {"type": "array", "items": {"type": "string"}},
-    "rc": {"type": "integer"},
-    "timed_out": {"type": "boolean"},
-    "started_at": {"type": "string", "minLength": 1},
-    "duration_s": {"type": "number", "minimum": 0},
-    "log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "log_bytes": {"type": "integer", "minimum": 0}
+    "schema": {
+      "const": "ckdn.meta/1"
+    },
+    "ckdn_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "check": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parser": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rc": {
+      "type": "integer"
+    },
+    "timed_out": {
+      "type": "boolean"
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "log_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "log_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "interrupted": {
+      "type": "boolean",
+      "description": "True when the run was cut short by SIGINT."
+    }
   }
 }
