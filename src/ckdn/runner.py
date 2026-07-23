@@ -14,11 +14,12 @@ Process-lifecycle rules (a hung child must never hang ckdn):
   descendant, so draining it blocks until *all* of them exit -- killing the
   direct child is not enough and the parent deadlocks. Writing to a file also
   means an interrupted run still leaves partial evidence on disk.
-* The child starts in its own process group/session, so the whole tree
-  (``uv`` -> ``pytest`` -> workers) can be signalled as a unit.
-* On timeout, on ``SIGINT``, and on any other exception the group is
-  terminated: ``SIGTERM`` -> grace period -> ``SIGKILL``. Nothing is left
-  running behind ckdn.
+* The child is detached into its own process group (POSIX) or held in a job
+  object (Windows), so the whole tree (``uv`` -> ``pytest`` -> workers) can be
+  stopped as a unit even after the wrapper that started it has exited.
+* On timeout, on ``SIGINT``, on a clean exit and on any other path the tree is
+  asked to stop, given a grace period, then terminated. What survives that is
+  documented in ``docs/status-model.md`` rather than assumed away.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 LOG_NAME = "full.log"
 #: A run directory without this file has not finished writing itself.
@@ -54,11 +55,6 @@ TERM_GRACE_SECONDS = 5.0
 #: How often a wait wakes up to notice Ctrl-C or a dead process group.
 POLL_SECONDS = 0.05
 EMPTY_LOG_SHA256 = hashlib.sha256(b"").hexdigest()
-#: `os.kill` raises OverflowError, not OSError, for a pid wider than a C
-#: int -- no caller can be expected to catch that, so refuse it up front.
-_MAX_PID = 2**31 - 1
-#: Windows `OpenProcess` failure that means "it exists, but not for you".
-_ERROR_ACCESS_DENIED = 5
 
 
 @dataclass(frozen=True)
@@ -143,17 +139,14 @@ def _terminate_tree_posix(proc: subprocess.Popen[bytes], grace: float) -> None:
     _terminate_group(proc, pgid, grace)
 
 
-def _terminate_tree_windows(
-    proc: subprocess.Popen[bytes], grace: float
-) -> None:  # pragma: no cover - Windows CI
-    subprocess.run(
-        ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-        capture_output=True,
-        check=False,
-    )
-    deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and _pid_alive(proc.pid):
-        time.sleep(POLL_SECONDS)
+def _win32() -> Any:
+    """The Win32 layer, imported only where its own imports resolve."""
+    if sys.platform != "win32":  # pragma: no cover - POSIX
+        return None
+
+    from ckdn import _win32 as module
+
+    return module
 
 
 def terminate_tree(
@@ -162,76 +155,21 @@ def terminate_tree(
     """Terminate every process the run started, not just the direct child.
 
     Safe to call whether or not the child is still alive -- descendants
-    routinely outlive it. Never raises: a tree we cannot signal must not mask
-    the run's real outcome.
+    routinely outlive it. Raises nothing of its own: a tree we cannot signal
+    must not mask the run's real outcome. A Ctrl-C arriving during the grace
+    does propagate, and the tree is taken down before it does -- absorbing it
+    is the caller's job.
     """
     if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
-        _terminate_tree_windows(proc, grace)
+        _win32().terminate_tree(proc, grace, POLL_SECONDS)
     else:
         _terminate_tree_posix(proc, grace)
-    with contextlib.suppress(subprocess.TimeoutExpired, OSError, ValueError):
+    with contextlib.suppress(subprocess.TimeoutExpired, OSError):
         proc.wait(timeout=grace)
 
 
 class RunLockError(RuntimeError):
     """Another live process already runs this check in this runs directory."""
-
-
-def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - Windows CI
-    """Ask the kernel directly; ``os.kill(pid, 0)`` is not usable here.
-
-    On Windows a dead pid makes ``os.kill(pid, 0)`` raise a bare ``OSError``
-    (``WinError 87``), indistinguishable from a real error -- and a pid that
-    does not fit a C int raises ``OverflowError``, which is not an ``OSError``
-    at all.
-    """
-    if sys.platform != "win32":
-        # Unreachable at runtime (guarded by the caller); the check narrows the
-        # platform so type checkers on POSIX do not read `ctypes.WinDLL`.
-        return False
-
-    import ctypes
-    from ctypes import wintypes
-
-    process_query_limited_information = 0x1000
-    still_active = 259
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    # Without an explicit restype ctypes truncates the handle to a C int,
-    # which silently corrupts 64-bit handles.
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    handle = kernel32.OpenProcess(
-        process_query_limited_information, False, wintypes.DWORD(pid)
-    )
-    if not handle:
-        # ACCESS_DENIED means the process exists and simply is not ours to
-        # query — the POSIX branch answers "alive" for exactly that case, and
-        # calling it dead would be the one error worth avoiding here.
-        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
-    try:
-        code = wintypes.DWORD()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-            return False
-        # A process that really exits with 259 is misread as alive; that is the
-        # accepted ambiguity of this API, and it only delays reclaiming a lock.
-        return code.value == still_active
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0 or pid > _MAX_PID:
-        return False
-    if sys.platform == "win32":  # pragma: no cover - Windows CI
-        return _pid_alive_windows(pid)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, simply not ours to signal
-    return True
 
 
 def _lock_path(runs_dir: Path, check: str) -> Path:
@@ -370,7 +308,7 @@ def _spawn(
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         creationflags = 0
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         tokens,
         cwd=cwd,
         stdout=log_fh,
@@ -379,6 +317,7 @@ def _spawn(
         start_new_session=sys.platform != "win32",
         creationflags=creationflags,
     )
+    return proc
 
 
 def _wait_interruptibly(proc: subprocess.Popen[bytes], timeout: float | None) -> int:
@@ -469,7 +408,19 @@ def execute(
                     rc=RC_NOT_FOUND, note=f"failed to start command: {exc}"
                 )
             else:
+                if sys.platform == "win32":  # pragma: no cover - Windows CI
+                    _win32().attach_job(proc)
                 ending = _await_child(proc, timeout)
+    except KeyboardInterrupt:
+        # Ctrl-C outside the wait -- while the log file is opened, or while
+        # the child is being put in its job. The `finally` below still stops
+        # the tree, and the run still reports an interrupt with its evidence
+        # rather than escaping with no outcome at all.
+        ending = _Ending(
+            rc=RC_INTERRUPTED,
+            interrupted=True,
+            note="run interrupted while starting the command",
+        )
     finally:
         # On every path, including a clean exit: a check that leaves a
         # background process behind would otherwise keep writing into a log

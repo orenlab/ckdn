@@ -111,6 +111,21 @@ exclude = [
     "^plugins/cursor-codeclone/scripts/launch_mcp\\.py$",
 ]
 
+# ckdn._win32 is imported only on Windows and binds Win32 APIs directly.
+# Checked here on Linux, its imports do not resolve; guarding every helper
+# just to satisfy that produced ten copies of the same preamble.
+[[tool.mypy.overrides]]
+module = "ckdn._win32"
+ignore_errors = true
+
+# Same reason as the mypy override above: ty analyses this module on Linux,
+# where the Win32 names it binds do not exist.
+[[tool.ty.overrides]]
+include = ["src/ckdn/_win32.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
 # jsonschema is a dev/test-only dependency (the core CLI stays stdlib-only)
 # and ships no type stubs; the self-validation test uses it directly.
 [[tool.mypy.overrides]]
