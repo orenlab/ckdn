@@ -58,14 +58,21 @@ report the series' verdict and hide that the rest never ran.
 
 ### What "terminated" guarantees
 
-The child starts in its own process group and **the group** — not just the
-direct child — is terminated: `SIGTERM`, a grace period, then `SIGKILL` for
-whatever is still there. This is what makes the guarantee hold when a wrapper
-like `uv` exits promptly on `SIGTERM` while the tool it launched ignores it.
-The group is terminated on every path, including a clean exit, so a check
-cannot leave a background process appending to a log whose digest is sealed.
+On POSIX the child starts in its own process group and **the group** — not
+just the direct child — is terminated: `SIGTERM`, a grace period, then
+`SIGKILL` for whatever is still there. This is what makes the guarantee hold
+when a wrapper like `uv` exits promptly on `SIGTERM` while the tool it
+launched ignores it. The group is terminated on every path, including a clean
+exit, so a check cannot leave a background process appending to a log whose
+digest is sealed.
 
-Two limits, stated rather than papered over:
+Three limits, stated rather than papered over:
+
+- **Windows has no graceful phase.** The tree is terminated forcefully at once
+  (`taskkill /T /F`), so a tool gets none of the grace a POSIX run gives it to
+  finish writing its report — the same `timeout` can therefore yield a
+  different digest on the two platforms. `taskkill` also walks parent links,
+  so a grandchild whose parent already exited is missed.
 
 - A check that deliberately detaches into a **new session** of its own leaves
   ckdn's group and outlives the run. Nothing portable can prevent that.
