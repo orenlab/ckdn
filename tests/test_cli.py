@@ -528,8 +528,9 @@ def test_verify_config_prints_every_error_and_exits_1(
     [
         # No `baseline = "…"` in [run]: nothing to record into.
         (["baseline", "ok"], "under [run]"),
-        # A run reference that resolves to nothing.
-        (["annotate", "no-such-run"], "ckdn: "),
+        # A run reference that resolves to nothing -- and the message says
+        # which of the two reasons it was, rather than "nothing has run yet".
+        (["annotate", "no-such-run"], "no run matching 'no-such-run' (unknown,"),
     ],
 )
 def test_commands_that_need_more_than_a_config_say_so(
@@ -611,7 +612,7 @@ def test_baseline_records_every_member_of_an_alias(
 
     def _one(_cfg: Any, check: Any, extra: Any) -> AtomicRunResult:
         # The recorded set must not be the digest's top-N slice.
-        assert check.options["top"] == 1_000_000_000
+        assert check.options["top"] == cli.BASELINE_TOP
         return AtomicRunResult(
             check=check.name,
             status="fail",
