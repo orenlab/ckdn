@@ -39,6 +39,12 @@ percentage:
   already rule out) gets `# pragma: no cover` **with the reason next to it**.
   If you cannot write that reason, the line wants a test — or deleting.
 
+One consequence worth knowing before you hit it: the gate runs on **every**
+Python in the matrix, so a `sys.version_info` branch is uncovered on the
+versions that do not take it and fails the build there. There is no such
+branch in `src` today. If you need one, it wants a `# pragma: no cover` with
+that as the reason — or a redesign that keeps the code version-agnostic.
+
 ## Pull requests
 
 1. Keep changes focused; prefer small PRs.

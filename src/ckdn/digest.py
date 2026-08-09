@@ -72,7 +72,7 @@ def tail(text: str, n: int) -> list[str]:
 
 
 def prune_summary(value: Any) -> Any:
-    """Drop empty containers, numeric zeros and ``False``; keep the rest."""
+    """Drop ``None``, empty text and containers, numeric zeros and ``False``."""
     if isinstance(value, dict):
         pruned = {
             k: v

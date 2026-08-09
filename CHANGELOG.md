@@ -21,11 +21,12 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 
 ### Fixed
 
-- Test coverage of the published package is now complete (91% → 100%) and
-  enforced in CI on every supported Python. The new tests cover paths that had
-  none: malformed tool reports, command-policy and lock-file rejections, and
-  the runner's interrupt handling. Three latent dead branches were found this
-  way and removed
+- Test coverage of `src` is now 100% (was 91%) and enforced in CI on every
+  supported Python. The new tests cover paths that had none: malformed tool
+  reports, command-policy and lock-file rejections, and the runner's interrupt
+  handling. Three latent dead branches were found this way and removed. The
+  Win32 layer is outside that measurement — it cannot be imported off Windows;
+  the Windows job exercises it instead
 
 ## [1.3.0] - 2026-07-23
 

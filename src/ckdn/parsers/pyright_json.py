@@ -22,8 +22,11 @@ from ckdn.parsers.base import Finding, ParseContext, ParseResult, format_locatio
 
 
 def _extract_json_object(text: str) -> Any | None:
-    """The first ``{`` to the last ``}``, parsed. Always an object when it
-    parses at all -- the type guard downstream is belt and braces."""
+    """Parse the slice from the first ``{`` to the last ``}``.
+
+    JSON that starts with ``{`` is an object by grammar, so a successful parse
+    here is always a ``dict`` -- the type guard downstream is belt and braces.
+    """
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end < 0 or end <= start:
