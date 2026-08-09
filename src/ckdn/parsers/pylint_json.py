@@ -61,7 +61,9 @@ class PylintJsonParser:
                 return err
             case ((data, messages), None):
                 pass
-            case _:
+            # Unreachable: the loader returns a payload or an error, never
+            # both and never neither. Kept so the match stays exhaustive.
+            case _:  # pragma: no cover
                 return ParseResult(
                     parser_ok=False,
                     notes=["pylint report could not be loaded"],

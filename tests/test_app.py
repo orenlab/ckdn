@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -27,10 +31,12 @@ from ckdn.app import (
     run_one,
 )
 from ckdn.app import run as app_run
+from ckdn.app.errors import AppError
 from ckdn.config import Config, load_config
 from ckdn.digest import DIGEST_NAME, META_NAME
 from ckdn.runner import (
     LOG_NAME,
+    RunLockError,
     RunOutcome,
     _lock_path,
     create_run_dir,
@@ -764,3 +770,52 @@ def test_a_late_ctrl_c_does_not_rewrite_a_finished_verdict(
     assert result.exit_code == 0
     assert result.digest.get("interrupted") is None
     assert (result.run_dir / DIGEST_NAME).exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_evidence_refuses_an_artifact_that_symlinks_out_of_the_run(
+    tmp_path: Path,
+) -> None:
+    """The name is listed and legal; the file it points at is not."""
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+    secret = tmp_path / "secrets.txt"
+    secret.write_text("token\n", encoding="utf-8")
+    (result.run_dir / "report.json").symlink_to(secret)
+
+    with pytest.raises(ArtifactError, match="escapes run directory"):
+        get_evidence(cfg, artifact="report.json")
+
+
+def test_a_lock_conflict_is_an_app_error_not_a_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MCP and the CLI both translate AppError into a message and exit 2; a
+    bare RunLockError escaped as a traceback."""
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+
+    @contextlib.contextmanager
+    def _busy(runs_dir: Path, check: str) -> Iterator[str]:
+        raise RunLockError(f"check '{check}' is already running")
+        yield ""  # pragma: no cover - unreachable, keeps this a generator
+
+    monkeypatch.setattr(app_run, "run_lock", _busy)
+    with pytest.raises(AppError, match="already running"):
+        run_one(cfg, cfg.checks["ok"], extra=[])
+
+
+def test_a_worker_thread_cannot_hold_sigint_and_runs_anyway(tmp_path: Path) -> None:
+    """`signal.signal` raises off the main thread -- where the MCP server runs.
+
+    The step must still happen; only the Ctrl-C protection is unavailable.
+    """
+    ran: list[str] = []
+
+    def _in_thread() -> None:
+        with app_run._sigint_held():
+            ran.append("step")
+
+    thread = threading.Thread(target=_in_thread)
+    thread.start()
+    thread.join()
+    assert ran == ["step"]

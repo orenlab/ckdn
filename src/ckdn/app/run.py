@@ -197,7 +197,6 @@ def _run_atomic(
     try:
         validate_command(
             command,
-            extra,
             cwd=cfg.cwd,
             policy=cfg.run.command_policy,
             allowlist_prefixes=cfg.run.command_allowlist,

@@ -460,3 +460,241 @@ def test_baseline_refuses_to_record_an_interrupted_run(
     assert baseline_path.read_text(encoding="utf-8") == before, (
         "a partial run must not overwrite the accepted findings"
     )
+
+
+# --- argument and configuration refusals -------------------------------------
+
+
+def test_run_all_and_a_check_name_are_mutually_exclusive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    rc = cli.main(["run", "--all", "ok", "--config", str(cfg)])
+    assert rc == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_run_all_refuses_extra_arguments(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    rc = cli.main(["run", "--all", "--config", str(cfg), "--", "-k", "smoke"])
+    assert rc == 2
+    assert "does not accept extra arguments" in capsys.readouterr().err
+
+
+def test_run_quiet_prints_nothing_on_a_pass(
+    tmp_path: Path, stub_execute: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    assert cli.main(["run", "--config", str(cfg), "--quiet", "ok"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_run_one_wrapper_reports_an_app_error_as_exit_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = load_config(
+        _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n'),
+        cwd=tmp_path,
+    )
+
+    def _refuse(*_a: object, **_k: object) -> None:
+        raise AppError("no")
+
+    monkeypatch.setattr("ckdn.cli.app_run_one", _refuse)
+    assert cli.run_one(cfg, cfg.checks["ok"], extra=[], quiet=True) == 2
+    assert "ckdn: no" in capsys.readouterr().err
+
+
+def test_verify_config_prints_every_error_and_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        '[run]\ncommand_policy = "workspace"\n\n'
+        '[check.bad]\ncommand = "cat /etc/passwd"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+    rc = cli.main(["verify-config", "--config", str(cfg), "--locked"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "escapes workspace" in err
+    assert "lock file not found" in err
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        # No `baseline = "…"` in [run]: nothing to record into.
+        (["baseline", "ok"], "under [run]"),
+        # A run reference that resolves to nothing.
+        (["annotate", "no-such-run"], "ckdn: "),
+    ],
+)
+def test_commands_that_need_more_than_a_config_say_so(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    expected: str,
+) -> None:
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    rc = cli.main([*argv, "--config", str(cfg)])
+    assert rc == 2
+    assert expected in capsys.readouterr().err
+
+
+def test_baseline_rejects_an_unknown_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        '[run]\nruns_dir = "runs"\nbaseline = "baseline.json"\n\n'
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+    rc = cli.main(["baseline", "nope", "--config", str(cfg), "--cwd", str(tmp_path)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown check 'nope'" in err
+    assert "configured: ok" in err
+
+
+def test_baseline_refuses_to_record_an_untrusted_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A parse_mismatch is no basis for accepting findings.
+
+    Recording the empty set it produced would mark every existing finding
+    "new" on the next run.
+    """
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(
+        '{"version": 1, "checks": {"ok": ["deadbeef"]}}', encoding="utf-8"
+    )
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        '[run]\nruns_dir = "runs"\nbaseline = "baseline.json"\n\n'
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+    before = baseline_path.read_text(encoding="utf-8")
+
+    def _mismatch(*_a: object, **_k: object) -> AtomicRunResult:
+        return AtomicRunResult(
+            check="ok",
+            status="parse_mismatch",
+            rc=1,
+            run_dir=tmp_path / "runs" / "x",
+            digest={"check": "ok", "findings": []},
+            exit_code=1,
+        )
+
+    monkeypatch.setattr("ckdn.cli.app_run_one", _mismatch)
+    rc = cli.main(["baseline", "ok", "--config", str(cfg), "--cwd", str(tmp_path)])
+    assert rc == 2
+    assert "not trustworthy enough" in capsys.readouterr().err
+    assert baseline_path.read_text(encoding="utf-8") == before
+
+
+def test_baseline_records_every_member_of_an_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        '[run]\nruns_dir = "runs"\nbaseline = "baseline.json"\n\n'
+        '[check.a]\ncommand = "true"\nparser = "generic"\n\n'
+        '[check.b]\ncommand = "true"\nparser = "generic"\n\n'
+        '[check.both]\nmembers = ["a", "b"]\n',
+        encoding="utf-8",
+    )
+
+    def _one(_cfg: Any, check: Any, extra: Any) -> AtomicRunResult:
+        # The recorded set must not be the digest's top-N slice.
+        assert check.options["top"] == 1_000_000_000
+        return AtomicRunResult(
+            check=check.name,
+            status="fail",
+            rc=1,
+            run_dir=tmp_path / "runs" / check.name,
+            digest={
+                "check": check.name,
+                "findings": [{"id": f"{check.name}-1", "message": "x"}],
+            },
+            exit_code=1,
+        )
+
+    monkeypatch.setattr("ckdn.cli.app_run_one", _one)
+    rc = cli.main(["baseline", "both", "--config", str(cfg), "--cwd", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "recorded 1 finding(s) for a" in out
+    assert "recorded 1 finding(s) for b" in out
+    recorded = json.loads((tmp_path / "baseline.json").read_text(encoding="utf-8"))
+    assert sorted(recorded["checks"]) == ["a", "b"]
+
+
+def test_a_config_error_is_a_message_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text('[check.a]\nparser = "generic"\n', encoding="utf-8")
+    rc = cli.main(["checks", "--config", str(cfg)])
+    assert rc == 2
+    assert "ckdn: [check.a]" in capsys.readouterr().err
+
+
+def test_an_interrupt_outside_a_check_still_exits_130(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+
+    def _interrupt(*_a: object, **_k: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("ckdn.cli.list_runs", _interrupt)
+    rc = cli.main(["list", "--config", str(cfg)])
+    assert rc == 130
+    assert capsys.readouterr().err == "ckdn: interrupted\n"
+
+
+def test_run_one_wrapper_prints_the_digest_when_not_quiet(
+    tmp_path: Path, stub_execute: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = load_config(
+        _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n'),
+        cwd=tmp_path,
+    )
+    result = cli.run_one(cfg, cfg.checks["ok"], extra=[], quiet=False)
+    assert not isinstance(result, int)
+    assert json.loads(capsys.readouterr().out)["check"] == "ok"
+
+
+def test_gate_flag_makes_the_exit_follow_the_baseline_not_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--gate` is the CI switch: only *new* findings should turn a job red."""
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        f'[run]\nruns_dir = "{(tmp_path / "runs").as_posix()}"\n'
+        'baseline = "baseline.json"\n\n'
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+
+    def _failing(*_a: object, **_k: object) -> AtomicRunResult:
+        return AtomicRunResult(
+            check="ok",
+            status="fail",
+            rc=1,
+            run_dir=tmp_path / "runs" / "x",
+            digest={"check": "ok", "gate": {"status": "pass"}, "findings": []},
+            exit_code=1,
+        )
+
+    monkeypatch.setattr("ckdn.cli.run_check", _failing)
+    args = ["run", "ok", "--config", str(cfg), "--cwd", str(tmp_path), "--quiet"]
+    # Every finding is already accepted: the gate passes, the run still failed.
+    assert cli.main([*args, "--gate"]) == 0
+    # Without --gate the exit reports execution truth, unchanged.
+    assert cli.main(args) == 1

@@ -184,26 +184,16 @@ class MypyParser:
         accum = _JsonAccum()
         for item in _iter_json_objects(ctx.log_text):
             _absorb_json_item(item, accum, ctx.max_snippet_lines)
-        result = self._finish(
+        # No json-only guard here: `_finish` already refuses a nonzero exit
+        # that produced no errors and no clean marker, in both dialects. The
+        # copy that used to live here could never fire on top of that.
+        return self._finish(
             ctx,
             accum.findings,
             accum.warnings,
             accum.notes,
             Counter(accum.codes),
         )
-        if (
-            result.parser_ok
-            and ctx.rc != 0
-            and not accum.findings
-            and not _CLEAN_RE.search(ctx.log_text)
-            and not _FOUND_RE.search(ctx.log_text)
-        ):
-            result.parser_ok = False
-            result.notes.append(
-                "mypy exited nonzero but no JSON errors were parsed and no "
-                "clean marker is present; inspect log_tail"
-            )
-        return result
 
     def _finish(
         self,

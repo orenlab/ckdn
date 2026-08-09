@@ -139,9 +139,9 @@ def _terminate_tree_posix(proc: subprocess.Popen[bytes], grace: float) -> None:
     _terminate_group(proc, pgid, grace)
 
 
-def _win32() -> Any:
+def _win32() -> Any:  # pragma: no cover - called only on Windows
     """The Win32 layer, imported only where its own imports resolve."""
-    if sys.platform != "win32":  # pragma: no cover - POSIX
+    if sys.platform != "win32":
         return None
 
     from ckdn import _win32 as module

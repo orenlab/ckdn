@@ -147,9 +147,18 @@ line-ending = "auto"
 [tool.coverage.run]
 source = ["ckdn"]
 branch = false
-omit = ["*/ckdn/__main__.py"]
+# `_win32` binds Win32 APIs through ctypes: off Windows it cannot even be
+# imported, so on the Linux job that carries the gate it would read as ~100
+# permanently dead statements and quietly buy back four points of slack. It is
+# exercised for real by the Windows job (see tests/test_runner.py).
+omit = ["*/ckdn/__main__.py", "*/ckdn/_win32.py"]
 
 [tool.coverage.report]
-fail_under = 96
+# 100, and it is met. Anything genuinely unreachable (a Windows-only branch, a
+# guard the type system already rules out) carries a `# pragma: no cover` with
+# the reason next to it, so the exceptions are reviewable instead of hidden in
+# a percentage.
+fail_under = 100
 show_missing = true
 skip_covered = true
+exclude_also = ['if __name__ == "__main__":']

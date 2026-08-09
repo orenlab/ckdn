@@ -328,8 +328,9 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
         raise ConfigError(f"[check.{name}] requires command and parser")
     if "fail_fast" in raw:
         raise ConfigError(f"[check.{name}] fail_fast is only valid on aliases")
-    if "members" in raw:
-        raise ConfigError(f"[check.{name}] members is only valid on aliases")
+    # No `members` guard here: a check that sets it is an alias by definition,
+    # and one that sets it alongside command/parser was rejected as ambiguous
+    # long before this point.
     timeout_raw = raw.get("timeout")
     timeout = float(timeout_raw) if timeout_raw is not None else None
     env = _parse_check_env(name, raw.get("env"))

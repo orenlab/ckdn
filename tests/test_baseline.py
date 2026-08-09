@@ -16,7 +16,7 @@ from jsonschema import Draft202012Validator
 
 from ckdn import DIGEST_SCHEMA
 from ckdn.app import run as app_run
-from ckdn.app import run_one
+from ckdn.app import run_alias, run_one
 from ckdn.baseline import (
     combine_gate,
     fingerprint,
@@ -183,3 +183,29 @@ def test_no_baseline_config_means_no_gate(
     _stub_execute(monkeypatch, rc=1)
     digest = run_one(cfg, cfg.checks["x"], extra=[]).digest
     assert "gate" not in digest and "baseline" not in digest
+
+
+def test_an_alias_reports_one_gate_for_all_its_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The aggregate needs its own gate, or `run --gate` on an alias is blind."""
+    (tmp_path / "ckdn.toml").write_text(
+        '[run]\nruns_dir = ".agent-runs"\nbaseline = "b.json"\n'
+        '[check.x]\ncommand = "cmd"\nparser = "fp"\n'
+        '[check.y]\ncommand = "cmd"\nparser = "fp"\n'
+        '[check.both]\nmembers = ["x", "y"]\nfail_fast = false\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path / "ckdn.toml", cwd=tmp_path)
+    finding = Finding(id="F", kind="k", message="m", location="a.py:5")
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _finding_parser(finding))
+    _stub_execute(monkeypatch, rc=1)
+
+    # x has accepted the finding, y has not.
+    assert cfg.baseline_path is not None
+    save(cfg.baseline_path, {"x": fingerprints_for("x", [finding.to_dict()])})
+
+    aggregate = run_alias(cfg, cfg.checks["both"]).aggregate
+    assert aggregate["status"] == "fail"
+    # One member still carries a new finding, so the combined gate fails.
+    assert aggregate["gate"]["status"] == "fail"
