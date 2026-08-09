@@ -63,9 +63,12 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # Coverage runs with the tests, never as an optional extra: the gate is
+      # `fail_under` in pyproject, so a push that drops a line fails here
+      # rather than in CI.
       - id: pytest
-        name: Pytest
-        entry: uv run pytest -q
+        name: Pytest (with coverage gate)
+        entry: uv run pytest -q --cov=src --cov-report=term-missing
         language: system
         pass_filenames: false
         always_run: true

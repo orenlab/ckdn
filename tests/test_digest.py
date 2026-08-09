@@ -177,6 +177,8 @@ def test_timed_out_only_when_true() -> None:
 
 def test_prune_summary_drops_zeros() -> None:
     assert prune_summary({"a": 0, "b": {"c": 0}, "d": 2}) == {"d": 2}
+    # A false flag is the default state; only the true one is worth printing.
+    assert prune_summary({"ok": False, "dirty": True}) == {"dirty": True}
 
 
 def test_alias_aggregate_sparse() -> None:

@@ -141,3 +141,18 @@ def test_doctor_warning_is_advisory_unless_strict(
     assert cli.main(["doctor", "--config", str(cfg)]) == 0  # warning only
     capsys.readouterr()
     assert cli.main(["doctor", "--config", str(cfg), "--strict"]) == 1
+
+
+def test_untokenizable_command_is_an_error(tmp_path: Path) -> None:
+    diags = _diag(
+        tmp_path,
+        '[check.broken]\ncommand = "pytest --k \'unbalanced"\nparser = "generic"\n',
+    )
+    assert diags == [
+        ("broken", "error", 'command is not tokenizable: "pytest --k \'unbalanced"')
+    ]
+
+
+def test_empty_command_is_an_error(tmp_path: Path) -> None:
+    diags = _diag(tmp_path, '[check.blank]\ncommand = "   "\nparser = "generic"\n')
+    assert diags == [("blank", "error", "command is empty")]

@@ -51,6 +51,11 @@ from ckdn.preflight import diagnose
 from ckdn.runner import RC_INTERRUPTED, prune
 from ckdn.schema import load_schema, schema_ids
 
+#: ``top`` for a baseline run. The baseline records every finding a check
+#: produced, so the digest's top-N slice must not truncate it; no real tool
+#: reports a billion findings, and a plain cap keeps the digest shape unchanged.
+BASELINE_TOP = 1_000_000_000
+
 
 def _fail(message: str) -> int:
     print(f"ckdn: {message}", file=sys.stderr)
@@ -204,7 +209,7 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     for target in targets:
         # Record every finding, not just the digest's top-N slice.
         uncapped = dataclasses.replace(
-            target, options={**target.options, "top": 1_000_000_000}
+            target, options={**target.options, "top": BASELINE_TOP}
         )
         result = app_run_one(cfg, uncapped, extra=[])
         if result.digest.get("interrupted"):

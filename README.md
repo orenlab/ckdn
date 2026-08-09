@@ -94,8 +94,10 @@ ckdn init                      # writes starter ckdn.toml
 echo '.agent-runs/' >> .gitignore
 
 ckdn checks                    # list configured checks
+ckdn doctor                    # pre-flight: tools on PATH, commands fit parsers
 ckdn run ruff                  # one atomic check → compact digest on stdout
 ckdn run lint                  # alias → members (e.g. ruff, pylint)
+ckdn run --all                 # every atomic check → one aggregate
 ckdn show                      # pretty-print latest digest
 ```
 
@@ -111,6 +113,7 @@ Full documentation lives at **[orenlab.github.io/ckdn](https://orenlab.github.io
 - [Status model](https://orenlab.github.io/ckdn/status-model/) — exit code × parser → one verdict; exit-code contract
 - [Digests & schemas](https://orenlab.github.io/ckdn/digests/) — the machine-readable contract (`ckdn.digest/2`)
 - [Aliases & aggregates](https://orenlab.github.io/ckdn/aliases/) — grouped checks and routing
+- [Baselines](https://orenlab.github.io/ckdn/baselines/) — gate CI on *new* findings only
 - [Configuration](https://orenlab.github.io/ckdn/configuration/) — `ckdn.toml`, command policy, working directory
 - [CLI](https://orenlab.github.io/ckdn/cli/) — command reference
 - [Parsers](https://orenlab.github.io/ckdn/parsers/) — built-ins, custom parsers, and plugins

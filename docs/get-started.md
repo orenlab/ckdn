@@ -24,11 +24,17 @@ ckdn init                      # writes starter ckdn.toml
 echo '.agent-runs/' >> .gitignore
 
 ckdn checks                    # list configured checks
+ckdn doctor                    # pre-flight: tools on PATH, commands fit parsers
 ckdn run ruff                  # one atomic check
 ckdn run lint                  # alias → members (e.g. ruff, pylint)
+ckdn run --all                 # every atomic check → one aggregate
 ckdn show                      # pretty-print latest digest
 ckdn list                      # recent runs
 ```
+
+`ckdn doctor` is worth the one run after `ckdn init`: it reads the config
+without starting anything and says which commands cannot work as written. See
+[Pre-flight diagnostics](configuration.md#pre-flight-diagnostics).
 
 Each run writes a directory under `.agent-runs/` holding the full log, tool
 artifacts, provenance (`meta.json`), and the deterministic `digest.json`. The

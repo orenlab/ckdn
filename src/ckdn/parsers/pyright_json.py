@@ -22,6 +22,11 @@ from ckdn.parsers.base import Finding, ParseContext, ParseResult, format_locatio
 
 
 def _extract_json_object(text: str) -> Any | None:
+    """Parse the slice from the first ``{`` to the last ``}``.
+
+    JSON that starts with ``{`` is an object by grammar, so a successful parse
+    here is always a ``dict`` -- the type guard downstream is belt and braces.
+    """
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end < 0 or end <= start:
@@ -89,7 +94,7 @@ class PyrightJsonParser:
                     "(expected `--outputjson` on stdout); inspect log_tail"
                 ],
             )
-        if not isinstance(data, dict):
+        if not isinstance(data, dict):  # pragma: no cover - see _extract_json_object
             return ParseResult(
                 parser_ok=False,
                 notes=["pyright JSON root is not an object; unexpected format"],

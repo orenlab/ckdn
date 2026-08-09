@@ -276,3 +276,99 @@ def test_cwd_separate_from_config_path(tmp_path: Path) -> None:
     assert cfg.config_path == path.resolve()
     assert cfg.cwd == worktree.resolve()
     assert cfg.runs_dir == worktree / ".agent-runs"
+
+
+def test_root_is_an_alias_for_cwd(tmp_path: Path) -> None:
+    cfg = load_config(
+        _write(tmp_path, '[check.a]\ncommand = "true"\nparser = "generic"\n'),
+        cwd=tmp_path,
+    )
+    assert cfg.root == cfg.cwd == tmp_path.resolve()
+
+
+def test_command_allowlist_prefixes_parsed(tmp_path: Path) -> None:
+    cfg = load_config(
+        _write(
+            tmp_path,
+            '[run]\ncommand_policy = "allowlist"\n'
+            '[run.command_allowlist]\nprefixes = ["make ", "./scripts/"]\n\n'
+            '[check.a]\ncommand = "make test"\nparser = "generic"\n',
+        ),
+        cwd=tmp_path,
+    )
+    assert cfg.run.command_allowlist == ("make ", "./scripts/")
+
+
+def test_command_allowlist_without_prefixes_falls_back_to_defaults(
+    tmp_path: Path,
+) -> None:
+    cfg = load_config(
+        _write(
+            tmp_path,
+            "[run.command_allowlist]\nother = 1\n\n"
+            '[check.a]\ncommand = "true"\nparser = "generic"\n',
+        ),
+        cwd=tmp_path,
+    )
+    assert cfg.run.command_allowlist is None
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        'command_allowlist = "nope"',
+        "[run.command_allowlist]\nprefixes = []",
+        '[run.command_allowlist]\nprefixes = "uv run "',
+        "[run.command_allowlist]\nprefixes = [1, 2]",
+        '[run.command_allowlist]\nprefixes = ["", "uv run "]',
+    ],
+)
+def test_command_allowlist_rejects_bad_shapes(tmp_path: Path, table: str) -> None:
+    body = (
+        f"[run]\n{table}\n\n"
+        if table.startswith("command_allowlist")
+        else f"[run]\n\n{table}\n\n"
+    )
+    with pytest.raises(ConfigError, match="command_allowlist"):
+        load_config(
+            _write(
+                tmp_path,
+                body + '[check.a]\ncommand = "true"\nparser = "generic"\n',
+            ),
+            cwd=tmp_path,
+        )
+
+
+def test_members_is_rejected_on_an_atomic_check(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="ambiguous"):
+        load_config(
+            _write(
+                tmp_path,
+                '[check.a]\ncommand = "true"\nparser = "generic"\nmembers = ["b"]\n',
+            ),
+            cwd=tmp_path,
+        )
+
+
+def test_check_env_must_be_a_table(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="env must be a table"):
+        load_config(
+            _write(
+                tmp_path,
+                '[check.a]\ncommand = "true"\nparser = "generic"\nenv = "FOO=bar"\n',
+            ),
+            cwd=tmp_path,
+        )
+
+
+def test_ckdn_cwd_env_var_selects_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    path = _write(tmp_path, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    monkeypatch.setenv("CKDN_CWD", str(project))
+    cfg = load_config(path)
+    assert cfg.cwd == project.resolve()
+    # An explicit cwd still wins over the environment.
+    assert load_config(path, cwd=tmp_path).cwd == tmp_path.resolve()

@@ -72,7 +72,7 @@ def tail(text: str, n: int) -> list[str]:
 
 
 def prune_summary(value: Any) -> Any:
-    """Drop empty containers and numeric zeros; keep bools and non-empty text."""
+    """Drop ``None``, empty text and containers, numeric zeros and ``False``."""
     if isinstance(value, dict):
         pruned = {
             k: v
@@ -83,9 +83,9 @@ def prune_summary(value: Any) -> Any:
     if isinstance(value, list):
         kept = [v for v in (prune_summary(item) for item in value) if v is not None]
         return kept or None
+    # `False == 0`, so the zero test already drops it -- deliberately: a false
+    # flag is the default state, and printing it is noise.
     if value is None or value == "" or value == 0 or value == 0.0:
-        return None
-    if value is False:
         return None
     return value
 

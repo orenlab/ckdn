@@ -100,3 +100,21 @@ def test_no_plugins_leaves_builtins_intact(
     _patch_entry_points(monkeypatch, [])
     assert parsers.get_parser("ruff") is not None
     assert parsers.get_parser("nonexistent") is None
+
+
+def test_the_first_plugin_of_a_name_wins(
+    monkeypatch: pytest.MonkeyPatch, clear_plugin_cache: None
+) -> None:
+    class Second:
+        name = "myplugin"
+
+        def parse(self, ctx: ParseContext) -> ParseResult:
+            return ParseResult(parser_ok=False, notes=["second"])
+
+    _patch_entry_points(
+        monkeypatch,
+        [_FakeEntryPoint(_PluginParser), _FakeEntryPoint(Second)],
+    )
+    parser = parsers.get_parser("myplugin")
+    assert parser is not None and type(parser).__name__ == "_PluginParser"
+    assert parsers.available_parsers().count("myplugin") == 1

@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -738,3 +739,139 @@ def test_the_spawn_seam_puts_the_child_in_a_job_and_uses_it(tmp_path: Path) -> N
         with contextlib.suppress(OSError):
             proc.kill()
         proc.wait()
+
+
+# --- containment corner cases the happy path never reaches -------------------
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_a_group_we_may_not_signal_still_counts_as_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ckdn.runner import _group_alive
+
+    def _denied(pgid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "killpg", _denied)
+    # Not ours to signal is not the same as gone: reporting it dead would skip
+    # the termination that the group still needs.
+    assert _group_alive(4242) is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_a_child_that_shares_our_group_is_killed_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """start_new_session did not take: signalling the group would kill ckdn."""
+    from ckdn.runner import _terminate_tree_posix
+
+    killed: list[str] = []
+
+    class _Proc:
+        pid = os.getpid()
+
+        def kill(self) -> None:
+            killed.append("kill")
+
+    def _no_groups(pgid: int, sig: int) -> None:
+        raise AssertionError("the group must not be signalled")
+
+    monkeypatch.setattr(os, "killpg", _no_groups)
+    _terminate_tree_posix(cast("subprocess.Popen[bytes]", _Proc()), 0.1)
+    assert killed == ["kill"]
+
+
+def test_a_second_ctrl_c_during_the_grace_period_is_absorbed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ckdn import runner as runner_mod
+
+    calls: list[float] = []
+
+    def _terminate(proc: object, grace: float = TERM_GRACE_SECONDS) -> None:
+        calls.append(grace)
+        if len(calls) == 1:
+            raise KeyboardInterrupt  # the impatient second keypress
+
+    monkeypatch.setattr(runner_mod, "terminate_tree", _terminate)
+    runner_mod._terminate_absorbing_interrupts(
+        cast("subprocess.Popen[bytes]", object())
+    )
+    # Retried immediately, without the grace period, instead of escaping.
+    assert calls == [TERM_GRACE_SECONDS, 0.0]
+
+
+def test_ctrl_c_while_the_command_is_starting_still_yields_an_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ckdn import runner as runner_mod
+
+    def _interrupt(*_a: object, **_k: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner_mod, "_spawn", _interrupt)
+    run_dir = create_run_dir(tmp_path, "check")
+    outcome = execute(["true"], tmp_path, run_dir, None)
+    assert outcome.rc == RC_INTERRUPTED
+    assert outcome.interrupted is True
+    assert outcome.exec_note == "run interrupted while starting the command"
+    # Evidence exists even though nothing ever ran.
+    assert (run_dir / LOG_NAME).exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_publishing_a_symlink_retires_a_stale_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `LATEST` and `latest` are one path on a case-insensitive filesystem, so
+    # the two pointers cannot coexist there at all. Rename the marker for this
+    # test to keep them distinct everywhere; the retirement rule is the point.
+    monkeypatch.setattr("ckdn.runner.LATEST_FILE", "LATEST.marker")
+    runs_dir = tmp_path / "runs"
+    run_dir = create_run_dir(runs_dir, "check")
+    # A marker left behind by an earlier fallback: beside a working link it
+    # contradicts it, and readers cannot tell which pointer is newer.
+    (runs_dir / "LATEST.marker").write_text("some-older-run\n", encoding="utf-8")
+    update_latest(runs_dir, run_dir)
+    assert (runs_dir / LATEST_LINK).resolve() == run_dir.resolve()
+    assert not (runs_dir / "LATEST.marker").exists()
+
+
+def test_an_empty_marker_resolves_to_no_run(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    (runs_dir / LATEST_FILE).write_text("\n", encoding="utf-8")
+    assert resolve_run_dir(runs_dir) is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_a_latest_link_pointing_outside_the_runs_dir_resolves_to_no_run(
+    tmp_path: Path,
+) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (runs_dir / LATEST_LINK).symlink_to(outside, target_is_directory=True)
+    assert resolve_run_dir(runs_dir) is None
+
+
+def test_a_run_dir_that_resolves_outside_the_runs_dir_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs_dir = tmp_path / "runs"
+    run_dir = create_run_dir(runs_dir, "check")
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    real_resolve = Path.resolve
+
+    def _escaping(self: Path, strict: bool = False) -> Path:
+        # A bind mount, a junction, an exotic filesystem: the entry itself is
+        # not a symlink, yet it lands outside the runs directory.
+        if self.name == run_dir.name:
+            return outside
+        return real_resolve(self, strict)
+
+    monkeypatch.setattr(Path, "resolve", _escaping)
+    assert resolve_run_dir(runs_dir, run_dir.name) is None

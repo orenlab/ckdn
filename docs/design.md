@@ -16,16 +16,16 @@ icon: lucide/compass
 
 ## Non-goals (for now)
 
-- Parallel member execution and global `ckdn run --all` (named aliases cover
-  lint/types groups; full-suite sequencing stays with the caller)
+- Parallel member execution — an alias and `ckdn run --all` run their members
+  in config order, one at a time, so one exit code owns the series
 - Watch mode, TUI, HTML dashboards
 - Windows symlink handling beyond the `LATEST` marker fallback
 
 ## Development
 
 ```bash
-uv sync --extra dev
-uv run pytest
+uv sync --extra dev --extra mcp
+uv run pytest -q --cov=src --cov-report=term-missing
 uv run ruff check src tests
 uv run mypy src
 ```
@@ -35,6 +35,13 @@ Entry point: `ckdn` → `ckdn.cli:main`.
 Contract tests pin the status-model invariants; parser tests pin fact
 extraction and loud-failure guards; schema tests validate every emitted
 document against its published JSON Schema.
+
+Coverage of `src` is **100%**, enforced by `fail_under` in `pyproject.toml` on
+every Python in the CI matrix — a new branch without a test fails the build.
+The Win32 layer is omitted from that measurement and exercised for real by
+the Windows job instead (it cannot be imported elsewhere); anything else
+that is genuinely unreachable carries a `# pragma: no cover` with the reason
+beside it, so the exceptions stay reviewable. See [Contributing](https://github.com/orenlab/ckdn/blob/main/CONTRIBUTING.md).
 
 ## Building these docs
 

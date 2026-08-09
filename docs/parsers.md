@@ -45,16 +45,16 @@ from ckdn.parsers.base import Finding, ParseContext, ParseResult
 
 
 class MyToolParser:
-  name = "mytool"
+    name = "mytool"
 
-  def parse(self, ctx: ParseContext) -> ParseResult:
-    report = ctx.artifact("report", "mytool.json")
-    if not report.exists():
-      return ParseResult(
-        parser_ok=False,
-        notes=[f"report not found: {report}"],
-      )
-    return ParseResult(findings=[...], summary={"count": 0})
+    def parse(self, ctx: ParseContext) -> ParseResult:
+        report = ctx.artifact("report", "mytool.json")
+        if not report.exists():
+            return ParseResult(
+                parser_ok=False,
+                notes=[f"report not found: {report}"],
+            )
+        return ParseResult(findings=[...], summary={"count": 0})
 ```
 
 Rules: prefer `{run_dir}` artifacts; if parsing text, add a self-consistency

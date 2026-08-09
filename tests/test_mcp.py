@@ -242,6 +242,17 @@ def test_server_context_env_and_load_error(
     with pytest.raises(ConfigLoadError):
         ServerContext().load(str(tmp_path / "missing.toml"))
 
+    # cwd resolution: explicit argument, then the server default, then the
+    # environment -- an agent driving a worktree slice relies on the last one.
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.delenv("CKDN_CWD", raising=False)
+    assert bare.resolve_cwd() is None
+    monkeypatch.setenv("CKDN_CWD", str(worktree))
+    assert bare.resolve_cwd() == worktree.resolve()
+    assert bare.resolve_cwd(str(tmp_path)) == tmp_path.resolve()
+    assert ServerContext(default_cwd=tmp_path).resolve_cwd() == tmp_path
+
 
 def test_mcp_main_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from ckdn.mcp import server as server_mod

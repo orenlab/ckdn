@@ -61,24 +61,17 @@ def command_matches_allowlist(command: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def _is_sensitive_path(resolved: Path) -> bool:
-    for root in _SENSITIVE_ROOTS:
-        try:
-            if resolved == root or resolved.is_relative_to(root):
-                return True
-        except ValueError:
-            continue
+    # `is_relative_to` answers with a bool on every platform -- a foreign drive
+    # letter is simply False -- so there is nothing here to catch.
+    if any(resolved.is_relative_to(root) for root in _SENSITIVE_ROOTS):
+        return True
     try:
         home = Path.home().resolve()
     except RuntimeError:
         return False
-    for name in _HOME_SECRET_DIRS:
-        secret_root = (home / name).resolve()
-        try:
-            if resolved == secret_root or resolved.is_relative_to(secret_root):
-                return True
-        except ValueError:
-            continue
-    return False
+    return any(
+        resolved.is_relative_to((home / name).resolve()) for name in _HOME_SECRET_DIRS
+    )
 
 
 def _path_like_segments(value: str) -> list[str]:
@@ -147,20 +140,24 @@ def validate_command_tokens(
 
 def validate_command(
     command: str,
-    extra: list[str],
     *,
     cwd: Path,
     policy: CommandPolicy,
+    tokens: list[str],
     allowlist_prefixes: tuple[str, ...] | None = None,
-    tokens: list[str] | None = None,
 ) -> list[str]:
-    """Validate ``command`` + ``extra`` and return the argv token list.
+    """Validate one invocation and return its argv token list.
 
-    Raises :class:`CommandPolicyError` when the active policy rejects the
-    invocation. ``tokens`` may be pre-built (after ``{run_dir}`` substitution).
+    ``command`` is the configured string, matched against the allowlist;
+    ``tokens`` is the argv it was built into -- the configured command plus any
+    extra arguments, after ``{run_dir}`` substitution -- and is what the path
+    rules actually inspect. Only the caller can build it: substitution needs a
+    run directory this module knows nothing about. Raises
+    :class:`CommandPolicyError` when the active policy rejects the invocation.
     """
+    argv = list(tokens)
     if policy == "off":
-        return list(tokens or [])
+        return argv
 
     if policy == "allowlist":
         prefixes = effective_allowlist_prefixes(allowlist_prefixes)
@@ -170,10 +167,7 @@ def validate_command(
                 f"allowed prefixes: {', '.join(repr(p) for p in prefixes)}"
             )
 
-    argv = list(tokens) if tokens is not None else []
-    if policy == "workspace":
-        validate_command_tokens(argv, cwd=cwd, policy=policy)
-    elif policy == "allowlist":
-        # Still confine explicit path arguments even when the executable is allowed.
-        validate_command_tokens(argv, cwd=cwd, policy="workspace")
+    # Path arguments are confined under either policy: an allowed executable
+    # is still not allowed to read outside the workspace.
+    validate_command_tokens(argv, cwd=cwd, policy="workspace")
     return argv

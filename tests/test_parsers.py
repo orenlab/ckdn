@@ -889,3 +889,305 @@ def test_module_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("ckdn.__main__", run_name="__main__")
     assert exc.value.code == 0
+
+
+# --- malformed reports: the defensive branches -------------------------------
+#
+# Real tools emit these shapes on their bad days (a plugin crash mid-report, a
+# truncated write, a schema change). Each one must degrade to a note or a
+# skipped entry, never to a traceback and never to a silent zero-finding pass.
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    import json as _json
+
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+
+
+def test_sarif_tolerates_malformed_runs_and_locations(tmp_path: Path) -> None:
+    payload = {
+        "version": "2.1.0",
+        "runs": [
+            "not a run object",
+            {"tool": "not a table", "results": []},
+            {"tool": {"driver": "not a table"}, "results": []},
+            {
+                "tool": {"driver": {"name": "x"}},
+                "results": [
+                    {"ruleId": "R1", "level": "error", "locations": "not a list"},
+                    {"ruleId": "R2", "level": "error", "locations": []},
+                    {"ruleId": "R3", "level": "error", "locations": ["not a dict"]},
+                    {
+                        "ruleId": "R4",
+                        "level": "error",
+                        "locations": [{"physicalLocation": "not a table"}],
+                    },
+                    {
+                        "ruleId": "R5",
+                        "level": "error",
+                        "locations": [{"physicalLocation": {"artifactLocation": 7}}],
+                    },
+                ],
+            },
+        ],
+    }
+    _write_json(tmp_path / "report.sarif", payload)
+    result = SarifParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok
+    # Every result is still counted; none of them resolves to a location.
+    assert len(result.findings) == 5
+    assert all(f.location is None for f in result.findings)
+    # Only the one well-formed driver contributes tool metadata.
+    assert result.summary["tools"] == [{"name": "x", "version": ""}]
+
+
+def test_sarif_runs_not_an_array_flips_parser_ok(tmp_path: Path) -> None:
+    _write_json(tmp_path / "report.sarif", {"version": "2.1.0", "runs": {}})
+    result = SarifParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is False
+    assert any("not an array" in n for n in result.notes)
+
+
+def test_sarif_fail_levels_accepts_a_bare_string_or_junk(tmp_path: Path) -> None:
+    (tmp_path / "report.sarif").write_text(SARIF_JSON, encoding="utf-8")
+    as_string = SarifParser().parse(ctx(tmp_path, rc=1, fail_levels="warning"))
+    assert {f.kind for f in as_string.findings} == {"sarif_warning"}
+    # A number is not a level list; fall back to the documented default.
+    junk = SarifParser().parse(ctx(tmp_path, rc=1, fail_levels=7))
+    assert {f.kind for f in junk.findings} == {"sarif_error"}
+
+
+def test_pyright_tolerates_malformed_diagnostics(tmp_path: Path) -> None:
+    payload = {
+        "generalDiagnostics": [
+            "not a diagnostic",
+            {"severity": "information", "message": "fyi"},
+            {"file": "a.py", "severity": "error", "range": "not a table"},
+            {"file": "b.py", "severity": "error", "range": {"start": "not a table"}},
+            {"file": "c.py", "severity": "error", "range": {"start": {"line": "x"}}},
+        ],
+        "summary": {"errorCount": 3, "warningCount": 0},
+    }
+    import json as _json
+
+    result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log=_json.dumps(payload)))
+    assert result.parser_ok
+    assert [f.location for f in result.findings] == ["a.py", "b.py", "c.py"]
+
+
+def test_pyright_warning_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:
+    bad = PYRIGHT_JSON.replace('"warningCount": 1', '"warningCount": 4')
+    result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log=bad))
+    assert result.parser_ok is False
+    assert any("warningCount=4" in n for n in result.notes)
+
+
+TY_CONCISE = """\
+src/pkg/mod.py:10:5: error[invalid-assignment] Object of type `str`
+src/pkg/other.py:1:8: warning[unused-ignore] Unused ignore
+Found 2 diagnostics
+"""
+
+
+def test_ty_parses_concise_format(tmp_path: Path) -> None:
+    result = TyTextParser().parse(ctx(tmp_path, rc=1, log=TY_CONCISE))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+    assert result.findings[0].location == "src/pkg/mod.py:10:5"
+    assert result.findings[0].id == "src/pkg/mod.py:10:5 invalid-assignment"
+    # Warnings are counted, never collected: ty exits 0 on warnings alone.
+    assert result.summary["warning_count"] == 1
+
+
+def test_ty_block_warning_is_counted_not_collected(tmp_path: Path) -> None:
+    log = (
+        "warning[unused-ignore]: Unused ignore\n --> src/a.py:1:1\nFound 1 diagnostic\n"
+    )
+    result = TyTextParser().parse(ctx(tmp_path, rc=0, log=log))
+    assert result.parser_ok
+    assert result.findings == []
+    assert result.summary["warning_count"] == 1
+
+
+def test_ruff_skips_non_dict_entries(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "ruff.json",
+        ["not a dict", {"code": "F401", "filename": "a.py", "message": "unused"}],
+    )
+    result = RuffJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+    assert result.findings[0].location == "a.py"
+
+
+def test_bandit_skips_non_dict_results_and_metrics(tmp_path: Path) -> None:
+    payload = {
+        "results": [
+            "not a dict",
+            {
+                "filename": "src/a.py",
+                "test_id": "B101",
+                "issue_text": "Use of assert",
+                "issue_severity": "LOW",
+            },
+        ],
+        "metrics": {
+            "_totals": "not a table",
+            "src/a.py": {"SEVERITY.LOW": 1},
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+    # No line number: the location degrades to the filename alone.
+    assert result.findings[0].location == "src/a.py"
+
+
+def test_pip_audit_skips_dependencies_without_a_vulns_array(tmp_path: Path) -> None:
+    payload = {
+        "dependencies": [
+            {"name": "clean", "version": "1.0"},
+            {"name": "odd", "version": "1.0", "vulns": "not a list"},
+            {"name": "bad", "version": "2.0", "vulns": [{"id": "GHSA-1"}]},
+        ]
+    }
+    _write_json(tmp_path / "pip-audit.json", payload)
+    result = PipAuditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+    assert result.summary["vulnerable_packages"] == 1
+
+
+def test_pip_audit_missing_dependencies_array_flips_parser_ok(tmp_path: Path) -> None:
+    _write_json(tmp_path / "pip-audit.json", {"skipped": []})
+    result = PipAuditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is False
+    assert any("dependencies" in n for n in result.notes)
+
+
+def test_pylint_missing_messages_array_flips_parser_ok(tmp_path: Path) -> None:
+    _write_json(tmp_path / "pylint.json", {"statistics": {}})
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=3))
+    assert result.parser_ok is False
+    assert any("`messages`" in n for n in result.notes)
+
+
+def test_pylint_ignores_unusable_statistics(tmp_path: Path) -> None:
+    payload = {
+        "messages": [{"type": "error", "symbol": "e", "path": "a.py", "line": 1}],
+        "statistics": {"messageTypeCount": "not a table", "score": "not a number"},
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=3, score_fail_under=9.0))
+    # The count cross-check is skipped, but a non-numeric score is loud: the
+    # gate cannot be evaluated, so the parse is not trustworthy.
+    assert result.parser_ok is False
+    assert any("not numeric" in n for n in result.notes)
+
+
+def test_pytest_junit_declared_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:
+    xml = JUNIT_ONE_FAILURE.replace('failures="1"', 'failures="3"')
+    (tmp_path / "junit.xml").write_text(xml, encoding="utf-8")
+    result = PytestJUnitParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is False
+    assert any("declares 3" in n for n in result.notes)
+
+
+def test_coverage_propagates_a_junit_parse_mismatch(tmp_path: Path) -> None:
+    (tmp_path / "coverage.xml").write_text(COVERAGE_XML, encoding="utf-8")
+    (tmp_path / "junit.xml").write_text(
+        JUNIT_ONE_FAILURE.replace('failures="1"', 'failures="3"'), encoding="utf-8"
+    )
+    result = CoverageXmlParser().parse(ctx(tmp_path, rc=1, fail_under=1.0))
+    # A coverage gate that passed cannot launder an untrustworthy junit parse.
+    assert result.parser_ok is False
+    assert any("declares 3" in n for n in result.notes)
+
+
+COVERAGE_XML_EDGE = """\
+<?xml version="1.0" ?>
+<coverage>
+  <packages><package name="pkg">
+    <classes>
+      <class name="full.py" filename="src/pkg/full.py">
+        <lines><line number="1" hits="1"/></lines>
+      </class>
+      <class name="dup.py" filename="src/pkg/mod.py">
+        <lines><line number="1" hits="0"/></lines>
+      </class>
+      <class name="dup2.py" filename="src/pkg/mod.py">
+        <lines><line number="2" hits="0"/></lines>
+      </class>
+      <class name="noname.py" filename="">
+        <lines><line number="1" hits="0"/></lines>
+      </class>
+    </classes>
+  </package></packages>
+</coverage>
+"""
+
+
+def test_coverage_defaults_missing_rates_and_dedupes_files(tmp_path: Path) -> None:
+    (tmp_path / "coverage.xml").write_text(COVERAGE_XML_EDGE, encoding="utf-8")
+    result = CoverageXmlParser().parse(ctx(tmp_path, rc=0, fail_under=99.0))
+    # No line-rate attribute at all: the default (0.0) is reported as-is
+    # rather than invented, so the gate fails loudly instead of passing blind.
+    assert result.summary["overall"]["line_percent"] == 0.0
+    assert result.gate_failures
+    files = [f["file"] for f in result.summary["top_uncovered_files"]]
+    # Fully covered and unnamed classes are dropped; a repeated filename once.
+    assert files == ["src/pkg/mod.py"]
+
+
+def test_mypy_json_nonzero_without_errors_or_marker_flips_parser_ok(
+    tmp_path: Path,
+) -> None:
+    result = MypyParser().parse(
+        ctx(tmp_path, rc=2, log="mypy crashed somewhere\n", format="json")
+    )
+    assert result.parser_ok is False
+    assert any("no errors were parsed" in n for n in result.notes)
+
+
+def test_pre_commit_hook_line_without_a_name_is_not_a_hook(tmp_path: Path) -> None:
+    log = "........................Passed\ncheck yaml...............Passed\n"
+    result = PreCommitTextParser().parse(ctx(tmp_path, rc=0, log=log))
+    assert result.parser_ok
+    assert result.summary["hooks_total"] == 1
+    assert result.summary["passed"] == 1
+
+
+def test_pre_commit_failure_without_an_exit_code(tmp_path: Path) -> None:
+    log = "black....................Failed\n- hook id: black\n"
+    result = PreCommitTextParser().parse(ctx(tmp_path, rc=1, log=log))
+    assert result.parser_ok
+    assert [f.message for f in result.findings] == ["black failed"]
+
+
+def test_artifact_path_reports_an_unresolvable_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_resolve = Path.resolve
+
+    def _boom(self: Path, strict: bool = False) -> Path:
+        if self.name == "junit.xml":
+            raise OSError("ELOOP")  # a symlink loop, an unreadable mount, …
+        return real_resolve(self, strict)
+
+    monkeypatch.setattr(Path, "resolve", _boom)
+    with pytest.raises(ArtifactPathError, match="could not be resolved"):
+        artifact_path(tmp_path / "run", "junit.xml")
+
+
+def test_pyright_unparsable_braces_flip_parser_ok(tmp_path: Path) -> None:
+    # Braces are present, so the extractor tries -- and the slice is not JSON.
+    result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log="npm error {oops}\n"))
+    assert result.parser_ok is False
+    assert any("could not extract" in n for n in result.notes)
+
+
+def test_pyright_missing_general_diagnostics_flips_parser_ok(tmp_path: Path) -> None:
+    result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log='{"summary": {}}'))
+    assert result.parser_ok is False
+    assert any("generalDiagnostics" in n for n in result.notes)

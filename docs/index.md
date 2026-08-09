@@ -55,4 +55,6 @@ graph LR
 - [Get started](get-started.md) — install and run your first check.
 - [Status model](status-model.md) — how exit code × parser become one verdict.
 - [Digests & schemas](digests.md) — the machine-readable contract.
+- [Baselines](baselines.md) — gate CI on *new* findings without fixing the
+  whole backlog first.
 - [Agents & MCP](agents-mcp.md) — wire ckdn into an agent loop.

@@ -61,7 +61,9 @@ class PylintJsonParser:
                 return err
             case ((data, messages), None):
                 pass
-            case _:
+            # Kept so the match stays exhaustive: the loader returns a payload
+            # or an error, never both and never neither.
+            case _:  # pragma: no cover - the loader always returns one of the two
                 return ParseResult(
                     parser_ok=False,
                     notes=["pylint report could not be loaded"],

@@ -104,7 +104,6 @@ def verify_config(
             tokens = build_tokens(check.command, probe_dir, [])
             validate_command(
                 check.command,
-                [],
                 cwd=cfg.cwd,
                 policy=cfg.run.command_policy,
                 allowlist_prefixes=cfg.run.command_allowlist,
