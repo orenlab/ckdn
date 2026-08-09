@@ -47,7 +47,9 @@ gates, notes, and explicit truncation counters:
 ```
 
 On `error` / `parse_mismatch` the digest additionally carries a bounded
-`log_tail`.
+`log_tail`. With a [baseline](baselines.md) configured it also carries
+`baseline` (`known` / `new` counts) and a `gate` — the CI decision, reported
+beside `status` and never in place of it.
 
 `digest.json` carries **facts only**; policy belongs in a skill or `CLAUDE.md`,
 not in the data file. Provenance (timestamps, durations, exact argv, log

@@ -9,6 +9,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-09
+
+Maintenance release. No behaviour changes: the CLI, the digest schemas and the
+MCP tools are identical to 1.3.0, and the core stays stdlib-only.
+
+### Changed
+
+- The `mcp` extra now requires `fastmcp>=3.4.6` (was `3.4.4`)
+- Dependencies refreshed, including `mcp` 1.29.0 and `cryptography` 50.0.0
+
+### Fixed
+
+- Test coverage of the published package is now complete (91% → 100%) and
+  enforced in CI on every supported Python. The new tests cover paths that had
+  none: malformed tool reports, command-policy and lock-file rejections, and
+  the runner's interrupt handling. Three latent dead branches were found this
+  way and removed
+
 ## [1.3.0] - 2026-07-23
 
 ### Added
@@ -167,7 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/orenlab/ckdn/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/orenlab/ckdn/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/orenlab/ckdn/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/orenlab/ckdn/compare/v1.1.0...v1.1.1
