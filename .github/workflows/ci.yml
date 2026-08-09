@@ -45,8 +45,8 @@ jobs:
   # Windows runs pytest only. POSIX-specific tests (real true/false, /etc
   # paths, symlink privilege) skip on Windows with an explicit reason -- and
   # the POSIX halves of the runner cannot execute here, so the coverage gate
-  # belongs to the Linux job. This job is what covers `_win32`, which that
-  # gate omits for the same reason in reverse.
+  # belongs to the Linux job. This job is what exercises `_win32`, which
+  # that gate omits for the same reason in reverse.
   test-windows:
     runs-on: windows-latest
     strategy:

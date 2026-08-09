@@ -38,10 +38,10 @@ document against its published JSON Schema.
 
 Coverage of `src` is **100%**, enforced by `fail_under` in `pyproject.toml` on
 every Python in the CI matrix — a new branch without a test fails the build.
-The Win32 layer is measured by the Windows job instead of the Linux one (it
-cannot be imported elsewhere); anything else that is genuinely unreachable
-carries a `# pragma: no cover` with the reason beside it, so the exceptions
-stay reviewable. See [Contributing](https://github.com/orenlab/ckdn/blob/main/CONTRIBUTING.md).
+The Win32 layer is omitted from that measurement and exercised for real by
+the Windows job instead (it cannot be imported elsewhere); anything else
+that is genuinely unreachable carries a `# pragma: no cover` with the reason
+beside it, so the exceptions stay reviewable. See [Contributing](https://github.com/orenlab/ckdn/blob/main/CONTRIBUTING.md).
 
 ## Building these docs
 
