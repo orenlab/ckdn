@@ -43,7 +43,8 @@ __all__ = [
     "list_artifacts",
     "prune_summary",
     "tail",
-    "write_documents",
+    "write_digest",
+    "write_meta",
 ]
 
 
@@ -206,17 +207,33 @@ def build_meta(*, check: str, parser: str, outcome: RunOutcome) -> dict[str, Any
     }
 
 
-def write_documents(
-    run_dir: Path, digest: dict[str, Any], meta: dict[str, Any]
-) -> None:
+def write_meta(run_dir: Path, meta: dict[str, Any]) -> None:
+    """Write the provenance document.
+
+    Must land before ``list_artifacts`` runs, or ``meta.json`` cannot appear
+    in the index the digest carries. The two writes used to be one call, which
+    left no room for the listing between them and silently dropped
+    ``meta.json`` from every digest.
+    """
     (run_dir / META_NAME).write_text(dump_json(meta), encoding="utf-8")
+
+
+def write_digest(run_dir: Path, digest: dict[str, Any]) -> None:
+    """Write the digest -- always last.
+
+    ``prune`` reads the presence of ``digest.json`` as "this run finished", so
+    nothing may be written to the run directory after it.
+    """
     (run_dir / DIGEST_NAME).write_text(dump_json(digest), encoding="utf-8")
 
 
 def list_artifacts(run_dir: Path) -> list[str]:
     """Names of files a reader may inspect in the run directory.
 
-    Excludes digest.json itself (it is the document being built).
+    Excludes digest.json itself (it is the document being built): its own
+    bytes must never depend on its own bytes. Everything else the run left
+    behind is fair game, ``meta.json`` included -- it is a sibling document
+    readers are pointed at, not part of the digest.
     """
     return sorted(
         p.name for p in run_dir.iterdir() if p.is_file() and p.name != DIGEST_NAME

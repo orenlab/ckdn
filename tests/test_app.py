@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -35,7 +37,7 @@ from ckdn.app import (
 from ckdn.app import run as app_run
 from ckdn.app.errors import AppError
 from ckdn.config import Config, load_config
-from ckdn.digest import DIGEST_NAME, META_NAME
+from ckdn.digest import DIGEST_NAME, META_NAME, build_digest
 from ckdn.runner import (
     LOG_NAME,
     RunLockError,
@@ -76,6 +78,38 @@ def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> RunOutcome:
         (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         rc = 1 if tokens and tokens[0] == "false" else 0
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=rc,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _fake)
+
+
+def _stub_execute_writing(
+    monkeypatch: pytest.MonkeyPatch, artifact: str, *, rc: int
+) -> None:
+    """An ``execute`` that leaves a tool-written artifact beside the log.
+
+    Real checks drop reports into ``{run_dir}``; the default stub does not, so
+    a test about the artifact index needs one that does.
+    """
+
+    def _fake(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        (run_dir / artifact).write_text("boom\n", encoding="utf-8")
         return RunOutcome(
             run_dir=run_dir,
             tokens=tokens,
@@ -429,6 +463,60 @@ def test_list_runs_and_evidence_bounds(tmp_path: Path) -> None:
 
     capped = get_evidence(cfg, artifact=LOG_NAME, limit=MAX_EVIDENCE_LIMIT + 50)
     assert capped["artifact"]["limit"] == MAX_EVIDENCE_LIMIT
+
+
+def test_digest_artifacts_index_every_file_the_run_left_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stored index must match the run directory, `meta.json` included.
+
+    The listing used to be taken before `meta.json` was written, so the
+    provenance document could never appear in it — while `get_evidence`,
+    which lists the same directory after the run, always reported it. One
+    field, two answers, decided by nothing but timing.
+    """
+    _stub_execute_writing(monkeypatch, "report.txt", rc=1)
+    cfg = _load_cfg(tmp_path, '[check.red]\ncommand = "false"\nparser = "generic"\n')
+    result = run_one(cfg, cfg.checks["red"], extra=[])
+
+    assert result.status == "fail"
+    on_disk = sorted(
+        p.name
+        for p in result.run_dir.iterdir()
+        if p.is_file() and p.name != DIGEST_NAME
+    )
+    assert on_disk == [LOG_NAME, META_NAME, "report.txt"]
+    assert result.digest["artifacts"] == on_disk
+    # The digest names itself nowhere: its own bytes must not depend on them.
+    assert DIGEST_NAME not in result.digest["artifacts"]
+
+    stored = json.loads((result.run_dir / DIGEST_NAME).read_text(encoding="utf-8"))
+    assert stored["artifacts"] == on_disk
+    assert get_evidence(cfg)["artifacts"] == stored["artifacts"], (
+        "the live listing and the stored index must not disagree"
+    )
+
+
+def test_meta_is_on_disk_before_the_digest_indexes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the write order, not just its outcome.
+
+    `build_digest` is the moment the index is frozen; if `meta.json` is not
+    already a file by then, no amount of writing it afterwards can put it in.
+    """
+    cfg = _load_cfg(tmp_path, '[check.red]\ncommand = "false"\nparser = "generic"\n')
+    seen: list[bool] = []
+
+    def _spy(**kwargs: Any) -> dict[str, Any]:
+        run_dir = cfg.cwd / str(kwargs["run_dir_rel"])
+        seen.append((run_dir / META_NAME).is_file())
+        return build_digest(**kwargs)
+
+    monkeypatch.setattr("ckdn.app.run.build_digest", _spy)
+    run_one(cfg, cfg.checks["red"], extra=[])
+
+    assert seen == [True], "meta.json must exist before the artifact index is built"
 
 
 def test_evidence_rejects_path_escape(tmp_path: Path) -> None:

@@ -29,7 +29,8 @@ from ckdn.digest import (
     build_digest,
     build_meta,
     list_artifacts,
-    write_documents,
+    write_digest,
+    write_meta,
 )
 from ckdn.parsers import available_parsers, get_parser
 from ckdn.parsers.base import ParseContext, Parser, ParseResult
@@ -312,6 +313,14 @@ def _run_atomic(
             timed_out=outcome.timed_out,
         )
         meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
+        # The provenance document is written before the run directory is
+        # listed, so the digest can index it. Bundling both writes after the
+        # listing is what dropped meta.json from every digest ever emitted.
+        # Order is safe on a retry of this step: build_meta is a pure function
+        # of `outcome`, so the bytes are identical, and digest.json — written
+        # last, and excluded from the listing regardless — cannot leak into
+        # its own index.
+        write_meta(run_dir, meta)
         digest = build_digest(
             check=check.name,
             status=status,
@@ -325,7 +334,7 @@ def _run_atomic(
             artifacts=list_artifacts(run_dir),
         )
         fingerprints = _annotate_baseline(cfg, check.name, status, result, digest)
-        write_documents(run_dir, digest, meta)
+        write_digest(run_dir, digest)
         update_latest(cfg.runs_dir, run_dir)
         prune(cfg.runs_dir, cfg.run.keep)
         return status, digest, fingerprints
