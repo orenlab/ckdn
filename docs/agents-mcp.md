@@ -154,9 +154,10 @@ Beyond `config` / `cwd`:
   include_meta=false)` — see below.
 
 `run` is resolved inside the runs directory, so it is a run id — one directory
-name — never a path. Limits are clamped rather than rejected: `list_runs` takes
-`limit` to `0..500`, `get_evidence` takes `limit` to `1..2000` and `offset` to
-`>= 0`, and the clamped values are what come back.
+name, never a path — and it must name a real, non-symlinked, non-dot-prefixed
+directory that resolves under the runs root. Limits are clamped rather than
+rejected: `list_runs` takes `limit` to `0..500`, `get_evidence` takes `limit`
+to `1..2000` and `offset` to `>= 0`.
 
 ### `get_evidence` result
 
@@ -176,15 +177,18 @@ evidence keys the run produced:
 
 `run_id` is the directory name — the value `run` accepts. `run_dir` is the
 digest's recorded path to it, relative to cwd. They are not interchangeable.
-`artifacts` is the live directory listing, not the digest's copy.
+`artifacts` is a live listing of the run directory (every file except
+`digest.json`), not the digest's recorded copy. `digest.json`, `meta.json` and
+`full.log` can always be passed as `artifact` whether or not they appear here.
 
 Merged in when present: `findings`, `findings_total`, `findings_truncated`,
 `gate_failures`, `notes`, `log_tail`, `summary`, `status_reason`. Sparse as
 everywhere else — a missing key means empty / `0` / `false`.
 
 The digest's `gate` and `baseline` blocks are **not** here; read those with
-`get_digest`. `include_meta: true` adds `meta` from `meta.json` when it exists
-and parses, or `meta_error` when it is corrupt.
+`get_digest`. `include_meta: true` adds `meta` when `meta.json` exists and
+parses to an object, or `meta_error` when the JSON is unparseable; a parseable
+non-object yields neither key.
 
 Passing `artifact` adds one block and changes nothing else:
 

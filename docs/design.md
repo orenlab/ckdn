@@ -23,7 +23,7 @@ icon: lucide/compass
 
 ## Development
 
-The same steps CI runs, in the same order:
+The same steps CI's Linux `test` job runs, in the same order:
 
 ```bash
 uv sync --extra dev --extra mcp

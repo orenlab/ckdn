@@ -59,7 +59,8 @@ Out of scope (unless you can show a concrete exploit path):
 - Command argv paths are confined to the workspace ``cwd`` by default
   (``command_policy = "workspace"``). ``"allowlist"`` keeps that containment
   and adds a second condition — the configured command must match a prefix in
-  ``[run.command_allowlist].prefixes`` — so it narrows the default rather than
+  ``[run.command_allowlist].prefixes``, or in the built-in set when that table
+  is absent — so it narrows the default rather than
   widening it; use it where agents can edit ``ckdn.toml`` and you want to pin
   *which* tools may run. Custom ``prefixes`` **replace** the built-in set
   (``uv run ``, ``uvx ``, ``true``, ``false``); they do not extend it, so list
