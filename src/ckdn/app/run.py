@@ -9,12 +9,14 @@ import dataclasses
 import datetime as dt
 import signal
 from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
 from typing import Any, TypeVar
 
 from ckdn import baseline
 from ckdn.app.errors import (
     AliasExtraArgsError,
     AppError,
+    BaselineLoadError,
     FailFastNotApplicableError,
     NotAliasError,
     NotAtomicError,
@@ -58,8 +60,23 @@ def exit_from_outcome(rc: int, status: str) -> int:
     return 0 if status == "pass" else 1
 
 
+def load_baseline(path: Path) -> dict[str, set[str]]:
+    """Read a baseline file, restating its failures as an :class:`AppError`.
+
+    :mod:`ckdn.baseline` is a pure module and raises its own
+    :class:`~ckdn.baseline.BaselineError`; the transports only know how to
+    report ``AppError``. Translating here is what makes a corrupt baseline a
+    clean refusal on the CLI and an ``isError`` over MCP, instead of a
+    traceback out of whichever one called it.
+    """
+    try:
+        return baseline.load(path)
+    except baseline.BaselineError as exc:
+        raise BaselineLoadError(str(exc)) from exc
+
+
 def _annotate_baseline(
-    cfg: Config,
+    loaded: dict[str, set[str]] | None,
     check_name: str,
     execution_status: str,
     result: ParseResult,
@@ -68,17 +85,18 @@ def _annotate_baseline(
     """Classify findings against the baseline and attach ``baseline``/``gate``.
 
     Execution truth (``digest['status']``) is never touched — see
-    :mod:`ckdn.baseline`. Only runs when ``[run].baseline`` is configured.
+    :mod:`ckdn.baseline`. ``loaded`` is ``None`` when ``[run].baseline`` is not
+    configured; it is read by the caller before the check starts, so nothing
+    here can fail on a file and abandon a run that already produced evidence.
 
     Returns the fingerprints of every finding of the run (empty when no
     baseline is configured). They are computed here anyway, and handing them
     back is what lets ``ckdn baseline`` record the complete set without asking
     the digest to carry an unbounded findings list.
     """
-    baseline_path = cfg.baseline_path
-    if baseline_path is None:
+    if loaded is None:
         return frozenset()
-    accepted = baseline.load(baseline_path).get(check_name, set())
+    accepted = loaded.get(check_name, set())
     seen: set[str] = set()
     new = 0
     known = 0
@@ -190,10 +208,25 @@ def run_one(
             "available: " + ", ".join(available_parsers())
         )
 
+    # The baseline is only *needed* at annotation time, but it is *known* at
+    # config time, so it is read here — before the run directory exists and
+    # before the tool spends a second. Reading it late is what let an
+    # unusable file abort a finished run, leaving a directory with a log and
+    # no digest: the orphan `_uninterruptible` exists to prevent, and one
+    # `prune` will keep forever because it has no digest to call it finished.
+    baseline_path = cfg.baseline_path
+    accepted = None if baseline_path is None else load_baseline(baseline_path)
+
     try:
         with run_lock(cfg.runs_dir, check.name) as lock_note:
             return _run_atomic(
-                cfg, check, check.command, parser, list(extra or ()), lock_note
+                cfg,
+                check,
+                check.command,
+                parser,
+                list(extra or ()),
+                lock_note,
+                accepted=accepted,
             )
     except RunLockError as exc:
         raise AppError(str(exc)) from exc
@@ -206,8 +239,14 @@ def _run_atomic(
     parser: Parser,
     extra: list[str],
     lock_note: str | None = None,
+    *,
+    accepted: dict[str, set[str]] | None,
 ) -> AtomicRunResult:
-    """Execute one already-validated atomic check while holding its lock."""
+    """Execute one already-validated atomic check while holding its lock.
+
+    ``accepted`` is the already-loaded baseline (``None`` when none is
+    configured), read by :func:`run_one` before this ran.
+    """
     run_dir = create_run_dir(cfg.runs_dir, check.name)
     tokens = build_tokens(command, run_dir, extra)
     policy_blocked = False
@@ -333,7 +372,7 @@ def _run_atomic(
             tail_lines=cfg.run.log_tail_lines,
             artifacts=list_artifacts(run_dir),
         )
-        fingerprints = _annotate_baseline(cfg, check.name, status, result, digest)
+        fingerprints = _annotate_baseline(accepted, check.name, status, result, digest)
         write_digest(run_dir, digest)
         update_latest(cfg.runs_dir, run_dir)
         prune(cfg.runs_dir, cfg.run.keep)

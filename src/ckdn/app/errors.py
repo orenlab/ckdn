@@ -29,6 +29,10 @@ class UnknownParserError(AppError):
     """Configured parser name is not registered."""
 
 
+class BaselineLoadError(AppError):
+    """Configured baseline file cannot be read as a baseline document."""
+
+
 class AliasExtraArgsError(AppError):
     """Aliases do not accept extra command arguments."""
 
