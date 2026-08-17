@@ -18,7 +18,7 @@ from ckdn.app.errors import AppError
 from ckdn.app.types import AtomicRunResult
 from ckdn.config import CONFIG_NAME, STARTER_CONFIG, load_config
 from ckdn.digest import DIGEST_NAME
-from ckdn.parsers.base import ParseResult
+from ckdn.parsers.base import Finding, ParseResult
 from ckdn.runner import RunOutcome, create_run_dir, update_latest
 
 
@@ -590,10 +590,85 @@ def test_baseline_rejects_an_unknown_check(
     assert "configured: ok" in err
 
 
-def test_baseline_refuses_to_record_an_untrusted_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("check_top", "shown"),
+    # the [run].top fallback, and a per-check override of it
+    [("", 3), ("top = 5\n", 5)],
+)
+def test_baseline_records_every_finding_but_stores_a_bounded_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    check_top: str,
+    shown: int,
 ) -> None:
-    """A parse_mismatch is no basis for accepting findings.
+    """`ckdn baseline` must record every finding — and leave a bounded digest.
+
+    The baseline needs all 25 fingerprints, but the run it performs is still a
+    run: its stored digest, and the `latest` pointer it publishes, must obey
+    the configured `top` like every other digest. Otherwise the next
+    `get_digest()` returns the whole backlog in one tool result.
+    """
+    cfg_path = tmp_path / CONFIG_NAME
+    cfg_path.write_text(
+        f'[run]\nruns_dir = "{(tmp_path / "runs").as_posix()}"\ntop = 3\n'
+        'baseline = "baseline.json"\n\n'
+        f'[check.x]\ncommand = "cmd"\nparser = "many"\n{check_top}',
+        encoding="utf-8",
+    )
+    findings = [
+        Finding(id=f"F{i}", kind="lint", message=f"m{i}", location=f"a{i}.py:1")
+        for i in range(25)
+    ]
+    seen_top: list[int] = []
+
+    class _Many:
+        name = "many"
+
+        def parse(self, ctx: Any) -> ParseResult:
+            seen_top.append(ctx.top)
+            return ParseResult(parser_ok=True, findings=list(findings))
+
+    def _execute(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        return _outcome(run_dir, 1)
+
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _Many())
+    monkeypatch.setattr(app_run, "execute", _execute)
+
+    rc = cli.main(["baseline", "x", "--config", str(cfg_path), "--cwd", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "recorded 25 finding(s) for x" in out
+    assert f"wrote {tmp_path / 'baseline.json'}" in out
+
+    # every finding is in the baseline -- that is what the command is for
+    recorded = json.loads((tmp_path / "baseline.json").read_text(encoding="utf-8"))
+    assert len(recorded["checks"]["x"]) == 25
+    # ...and the parser was handed the configured cap, not a disabled one
+    assert seen_top == [shown]
+
+    # what it left behind for the next reader is bounded by that same cap
+    assert cli.main(["show", "--config", str(cfg_path), "--cwd", str(tmp_path)]) == 0
+    stored = json.loads(capsys.readouterr().out)
+    assert stored["findings_total"] == 25
+    assert len(stored["findings"]) == shown
+    assert stored["findings_truncated"] == 25 - shown
+
+
+@pytest.mark.parametrize("status", ["parse_mismatch", "error"])
+def test_baseline_refuses_to_record_an_untrusted_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+) -> None:
+    """Neither a parse_mismatch nor an error is a basis for accepting findings.
 
     Recording the empty set it produced would mark every existing finding
     "new" on the next run.
@@ -613,7 +688,7 @@ def test_baseline_refuses_to_record_an_untrusted_result(
     def _mismatch(*_a: object, **_k: object) -> AtomicRunResult:
         return AtomicRunResult(
             check="ok",
-            status="parse_mismatch",
+            status=status,
             rc=1,
             run_dir=tmp_path / "runs" / "x",
             digest={"check": "ok", "findings": []},
@@ -640,18 +715,16 @@ def test_baseline_records_every_member_of_an_alias(
     )
 
     def _one(_cfg: Any, check: Any, extra: Any) -> AtomicRunResult:
-        # The recorded set must not be the digest's top-N slice.
-        assert check.options["top"] == cli.BASELINE_TOP
         return AtomicRunResult(
             check=check.name,
             status="fail",
             rc=1,
             run_dir=tmp_path / "runs" / check.name,
-            digest={
-                "check": check.name,
-                "findings": [{"id": f"{check.name}-1", "message": "x"}],
-            },
+            # The digest shows its top-N slice; the recorded set is the run's
+            # complete fingerprint set, which is not read from the digest.
+            digest={"check": check.name, "findings": [], "findings_total": 1},
             exit_code=1,
+            fingerprints=frozenset({f"fp-{check.name}"}),
         )
 
     monkeypatch.setattr("ckdn.cli.app_run_one", _one)
