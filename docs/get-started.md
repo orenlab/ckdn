@@ -34,15 +34,16 @@ ckdn list                      # recent runs
 
 The edit step is not optional: the starter config enables checks a given
 project may not have (`coverage`, `mypy`, `pre_commit`, …), and `--all`
-reports every missing tool as `error`.
+reports the missing ones as `error` — or `fail`, for a check on the `generic`
+parser, which promises no findings to go missing.
 
 `ckdn doctor` is worth the one run after `ckdn init`: it reads the config
 without starting anything and says which commands cannot work as written. See
 [Pre-flight diagnostics](configuration.md#pre-flight-diagnostics).
 
 An alias and `--all` print their aggregate to stdout only — it is never stored,
-and `latest` points at the last member, so the `ckdn show` above prints that
-member's digest rather than the aggregate. See [CLI](cli.md).
+and `latest` points at the last member that ran, so the `ckdn show` above
+prints that member's digest rather than the aggregate. See [CLI](cli.md).
 
 Each run writes a directory under `.agent-runs/` holding the full log, tool
 artifacts, provenance (`meta.json`), and the deterministic `digest.json`. The

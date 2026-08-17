@@ -7,8 +7,9 @@ icon: lucide/terminal
 `ckdn --version` prints the version. `python -m ckdn` is equivalent to the
 `ckdn` entry point.
 
-Global flags: `--config PATH`, `--cwd DIR` (working directory for subprocesses
-and relative `runs_dir`; else `CKDN_CWD`). Every command accepts them except
+Per-command flags — they follow the subcommand, not `ckdn` itself:
+`--config PATH`, `--cwd DIR` (working directory for subprocesses and relative
+`runs_dir`; else `CKDN_CWD`). Every command accepts them except
 `schema`, which reads no config. `ckdn init` accepts them too, and resolves its
 target through the same function the reading commands use — so the command that
 *writes* the config and the ones that *read* it cannot disagree about where it
@@ -47,8 +48,10 @@ overrides; there is no `--no-fail-fast`.
 
 Alias stdout is **only** the aggregate — and stdout is the only copy of it.
 Run directories are written per member, so the aggregate is never stored and
-`latest` ends up pointing at the **last member**: after `ckdn run <alias>` or
-`ckdn run --all`, `ckdn show` prints that member's digest, not the aggregate.
+`latest` ends up pointing at the **last member that ran** — with `fail_fast`
+(the default) that is the member that failed, not the last one listed: after
+`ckdn run <alias>` or `ckdn run --all`, `ckdn show` prints that member's
+digest, not the aggregate.
 Redirect stdout if you need the aggregate afterwards.
 
 `list` and `checks` default to human-readable tab-separated text; add `--json`
@@ -64,9 +67,11 @@ never upgrade red. A code outside 1–255 (a signal death, e.g. `-9`) becomes
 the synthetic `124` / `126` / `127` / `130`, is in the
 [status model](status-model.md#exit-code-contract).
 
-**`2` means ckdn refused to start** — nothing ran, so there is no verdict.
-Every subcommand reserves it, which is what lets CI tell a broken invocation
-from a red check instead of seeing both as "nonzero". Exit 2 covers:
+**ckdn uses `2` for every refusal to start** — nothing ran, so there is no
+verdict. It is not reserved: `ckdn run` passes the command's own code through,
+so a check whose tool exits `2` also exits `2`. What separates them is the
+evidence — a refusal writes no run directory and no digest, while a red check
+writes both. Exit 2 covers:
 
 - usage errors (unknown flag, missing subcommand);
 - config errors — no `ckdn.toml`, invalid TOML, a mistyped value;
@@ -86,12 +91,13 @@ found problems. That is a verdict, not a refusal.
 running anything or changing the run's status:
 
 ```bash
-ckdn run pytest || { rc=$?; ckdn annotate; exit $rc; }   # inline ::error, still red
+ckdn run pytest || { rc=$?; ckdn annotate || true; exit $rc; }   # ::error, still red
 ckdn annotate --format sarif > ckdn.sarif                # upload to code scanning
 ```
 
-The braces are not decoration. `annotate` always exits `0` — it is a
-projection, not a verdict — and a CI step takes the code of its last command.
+The braces are not decoration. `annotate` exits `0` whenever it renders a
+digest — it is a projection, not a verdict, and only fails (`2`) when it cannot
+find the run — and a CI step takes the code of its last command.
 Piping the run into a bare `|| ckdn annotate` therefore ends the step on that
 `0` and reports a failing run as green: the exact false green ckdn exists to
 prevent. Capture the run's code and re-raise it.
@@ -104,5 +110,5 @@ prevent. Capture the run's code and re-raise it.
 
 `annotate` renders one stored digest. Since an alias stores no aggregate, the
 default `latest` after `ckdn run <alias>` or `ckdn run --all` is the last
-member — every other member's findings are silently absent. Pass the run id of
-each member you want annotated.
+member that ran — every other member's findings are silently absent. Pass the
+run id of each member you want annotated.
