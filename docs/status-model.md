@@ -35,9 +35,11 @@ Invariants (enforced by `ckdn.reconcile`, covered by contract tests):
 `ckdn run` exits with the original command's code, so it drops into any hook or
 CI slot where the raw command used to be. Two extra rules: `rc == 0` with a
 non-green status exits `1`, and a code outside `1–255` is **replaced** by `1`
-rather than folded into range — `rc = 300` exits `1`, and so does the negative
-code a signal-killed child reports (`-11` after `SIGSEGV`). The digest keeps the
-real number in `rc` either way; only the process exit is constrained.
+rather than folded into range — the negative code a signal-killed child reports
+(`-11` after `SIGSEGV`) exits `1`, and so does a code above 255, which only
+Windows can deliver: POSIX hands back the low 8 bits, so `exit 300` arrives as
+`44`. The digest keeps the real number in `rc` either way; only the process exit
+is constrained.
 
 `--gate` replaces this contract wholesale. The exit becomes the
 [baseline gate](baselines.md) decision: `pass` → `0`, `fail` → `1`,

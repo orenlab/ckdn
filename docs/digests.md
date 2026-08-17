@@ -48,8 +48,9 @@ gates, notes, and explicit truncation counters:
 
 `log_tail` is a bounded slice of the end of `full.log`. It is attached on
 `error` and `parse_mismatch` — and also on a plain `fail`: unconditionally when
-the parser never promised findings (`generic`), and whenever any parser asks
-for it. Do not infer a status from its presence; read `status`.
+the parser never promised findings (`generic`), and whenever a parser asks for
+it — of the built-ins, only `generic` ever does. Do not infer a status from its
+presence; read `status`.
 
 With a [baseline](baselines.md) configured, `gate` — the CI decision, reported
 beside `status` and never in place of it — is attached to **every** run,
@@ -84,7 +85,7 @@ document — a key not below is a key ckdn does not emit.
 | `artifacts`          | non-`pass` and the run directory holds files to inspect           |
 | `log_tail`           | see above                                                         |
 | `timed_out`          | `true` when the check hit its `timeout` (absent means false)      |
-| `interrupted`        | `true` when the run was cut short by Ctrl-C (absent means false)  |
+| `interrupted`        | `true` when the run was cut short by SIGINT (Ctrl-C)              |
 | `baseline`           | a baseline is configured **and** the run produced findings        |
 | `gate`               | a baseline is configured                                          |
 
@@ -145,6 +146,8 @@ check is refused rather than doubling the load on the same tool. `LATEST` is a
 plain file naming the newest run directory; ckdn writes it in place of the
 `latest` symlink where symlinks are unavailable — always on Windows, where
 creating one needs privilege — and removes a stale marker once a symlink works
-again, so the two pointers can never disagree.
+again. The reverse is not cleaned up: if symlink creation starts failing after
+one succeeded, a stale `latest` is left beside the new `LATEST`, and `latest`
+wins, so a reader gets the older run.
 
 `.agent-runs/` is evidence: do not edit it; keep it out of version control.

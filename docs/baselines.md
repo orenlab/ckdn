@@ -47,7 +47,7 @@ A digest with a baseline active:
     }
   ],
   "run_dir": ".agent-runs/20260707T101500Z-pytest",
-  "artifacts": ["full.log", "junit.xml"],
+  "artifacts": ["full.log", "junit.xml", "meta.json"],
   "baseline": { "known": 1, "new": 0 },
   "gate": { "status": "pass", "policy": "no_new_findings" }
 }
@@ -82,6 +82,10 @@ rule that matches wins:
 Rules 2 and 4 are why "no new findings" is not the same test as
 `new == 0`. A failure that produced nothing to classify is an unknown failure,
 and baseline never masks one.
+
+Under `--gate` the verdict becomes the process exit: `pass` → `0`, `fail` →
+`1`, and `unavailable` hands the exit back to the honest execution exit — the
+gate declines to answer rather than inventing one.
 
 Every gate carries `status` and `policy`. A gate that is not `pass` also carries
 the `reason` it landed there — except an aggregate's, which reports only the
@@ -132,21 +136,22 @@ the rest follows from what is left in the hash:
   part left.
 - **Findings agreeing on kind, path and message collapse into one entry.**
   Twelve identical unused-import messages in one file record as one
-  fingerprint, and a finding carrying no `location` is keyed by its message
-  alone across the entire check.
+  fingerprint, and a finding carrying no `location` is keyed by its kind and
+  message across the entire check.
 
 ## A missing or unreadable baseline file
 
 A baseline file that does not exist is read as an **empty** baseline: no error,
-every finding classified `new`, `--gate` exits 1. A typo in `[run].baseline`
-therefore fails closed — CI goes red rather than quietly accepting everything.
+every finding classified `new`, so `--gate` exits 1 on any run that has
+findings. A typo in `[run].baseline` therefore fails closed — CI goes red
+rather than quietly accepting everything.
 
 Within a file that is valid JSON, entries ckdn cannot use are skipped in
 silence: a check whose value is not a list of fingerprints simply loses its
 baseline, and all of that check's findings come back `new` on the next run. A
 file that is not valid JSON at all is not handled — the run aborts once the
-check has already finished, leaving a run directory with `full.log` and the
-tool's artifacts but no `digest.json`.
+check has already finished, leaving a run directory with `full.log`, the
+tool's artifacts and `meta.json`, but no `digest.json`.
 
 ## What `ckdn baseline` will not do
 
