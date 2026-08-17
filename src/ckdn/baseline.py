@@ -28,6 +28,15 @@ from typing import Any
 BASELINE_SCHEMA = "ckdn.baseline/1"
 
 
+class BaselineError(Exception):
+    """A configured baseline file is not a usable baseline document.
+
+    The storage format is this module's own business, so its failures are
+    reported in its own terms — a caller cannot be expected to handle a
+    ``json`` or ``os`` error it has no way of knowing :func:`load` can raise.
+    """
+
+
 def _path_of(location: str | None) -> str:
     """A finding's file path with any trailing ``:line[:col]`` stripped.
 
@@ -55,11 +64,36 @@ def fingerprint(check: str, finding: dict[str, Any]) -> str:
 
 
 def load(path: Path) -> dict[str, set[str]]:
-    """Load a baseline file into ``{check: {fingerprints}}``; empty if missing."""
+    """Load a baseline file into ``{check: {fingerprints}}``; empty if missing.
+
+    A missing file is an empty baseline — that is how the first run works.
+    Anything else that stops the document from being read is a
+    :class:`BaselineError`: unreadable bytes, JSON that does not parse, or a
+    document that is not an object. Those say the file is not a baseline at
+    all, and reading them as "no findings accepted" would mark every existing
+    finding new while never mentioning the file that was meant to say
+    otherwise.
+
+    Malformed *entries inside* a valid document remain deliberately tolerated
+    (see the loop below): one check's value being the wrong shape is not a
+    reason to stop every other check in the file.
+    """
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    checks = data.get("checks", {}) if isinstance(data, dict) else {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BaselineError(f"cannot read baseline {path}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BaselineError(f"invalid JSON in baseline {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise BaselineError(
+            f"baseline {path} is not a baseline document: expected a JSON "
+            f"object, found {type(data).__name__}"
+        )
+    checks = data.get("checks", {})
     out: dict[str, set[str]] = {}
     if isinstance(checks, dict):
         for name, fps in checks.items():

@@ -16,9 +16,10 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from ckdn import DIGEST_SCHEMA, cli
+from ckdn.app import AppError, run_alias, run_one
 from ckdn.app import run as app_run
-from ckdn.app import run_alias, run_one
 from ckdn.baseline import (
+    BaselineError,
     combine_gate,
     fingerprint,
     gate,
@@ -448,3 +449,150 @@ def test_an_alias_does_not_gate_pass_on_an_unaccounted_member(
     assert result.aggregate["status"] == "fail"
     assert result.aggregate["gate"]["status"] == "unavailable"
     assert gate_exit(result.aggregate["gate"]["status"], result.exit_code) == 1
+
+
+# --- an unusable baseline file is a refusal, never a traceback -------------
+
+
+def _corrupt_baseline(tmp_path: Path, body: str = "not json at all {{{") -> Config:
+    """Config whose ``[run].baseline`` points at a file that is not a baseline."""
+    path = _write_config(tmp_path, '[check.x]\ncommand = "cmd"\nparser = "generic"\n')
+    cfg = load_config(path, cwd=tmp_path)
+    assert cfg.baseline_path is not None
+    cfg.baseline_path.write_text(body, encoding="utf-8")
+    return cfg
+
+
+def _never_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any attempt to execute the check an explicit test failure."""
+
+    def _boom(*args: object, **kwargs: object) -> RunOutcome:
+        raise AssertionError("the check must not run with an unusable baseline")
+
+    monkeypatch.setattr(app_run, "execute", _boom)
+
+
+def _cli(cfg: Config, tmp_path: Path, *argv: str) -> list[str]:
+    return [*argv, "--config", str(cfg.config_path), "--cwd", str(tmp_path)]
+
+
+def test_load_refuses_a_file_that_is_not_json(tmp_path: Path) -> None:
+    """`load` owns its storage format, so it must not leak `json` errors.
+
+    Callers can only handle what the module's own contract names.
+    """
+    path = tmp_path / "b.json"
+    path.write_text("not json at all {{{", encoding="utf-8")
+    with pytest.raises(BaselineError) as caught:
+        load(path)
+    message = str(caught.value)
+    assert str(path) in message
+    assert "JSON" in message
+
+
+@pytest.mark.parametrize(
+    ("body", "found"),
+    [("[1, 2]", "list"), ('"nope"', "str"), ("null", "NoneType"), ("42", "int")],
+)
+def test_load_refuses_a_document_that_is_not_an_object(
+    tmp_path: Path, body: str, found: str
+) -> None:
+    """Valid JSON that is not a baseline *document* used to load as empty.
+
+    Silently: every finding then read as new, and the file that was supposed
+    to say otherwise never mentioned. A document-level shape error is the same
+    class of defect as unparseable bytes, so it is refused the same way.
+
+    The message has to name what was actually found, not just that something
+    was wrong — that is the difference between "fix your baseline" and
+    knowing the file holds a bare list.
+    """
+    path = tmp_path / "b.json"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(BaselineError) as caught:
+        load(path)
+    message = str(caught.value)
+    assert str(path) in message
+    assert f"found {found}" in message
+
+
+def test_load_refuses_a_baseline_it_cannot_read(tmp_path: Path) -> None:
+    """A path that exists but cannot be read is a refusal, not an OSError.
+
+    A directory stands in for the whole family (permissions, a broken mount):
+    it is the one case that is reproducible on any OS without root.
+    """
+    path = tmp_path / "b.json"
+    path.mkdir()
+    with pytest.raises(BaselineError) as caught:
+        load(path)
+    assert str(path) in str(caught.value)
+
+
+def test_load_still_skips_malformed_entries_inside_a_valid_document(
+    tmp_path: Path,
+) -> None:
+    """Deliberate and documented: a bad *entry* is dropped, the document loads.
+
+    The line this fix must not cross. Rejecting the whole document because one
+    check's value is the wrong shape would turn a cosmetic edit to the file
+    into a hard stop for every check in it.
+    """
+    path = tmp_path / "b.json"
+    doc = {"checks": {"ruff": ["a"], "mypy": "not-a-list", "pytest": 5}}
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    assert load(path) == {"ruff": {"a"}}
+    # a `checks` value that is not a table is tolerated the same way
+    path.write_text(json.dumps({"checks": []}), encoding="utf-8")
+    assert load(path) == {}
+    # and a document with no `checks` key at all is simply empty
+    path.write_text(json.dumps({"schema": "ckdn.baseline/1"}), encoding="utf-8")
+    assert load(path) == {}
+
+
+def test_a_corrupt_baseline_refuses_before_the_check_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect: the run executed, then died annotating, orphaning its dir.
+
+    A baseline is only *read* at annotation time, but it is *known* at config
+    time — so it is checked before anything is spent. The refusal has to reach
+    the transports as an ``AppError``, the one thing every one of them already
+    knows how to report.
+    """
+    cfg = _corrupt_baseline(tmp_path)
+    _never_runs(monkeypatch)
+    with pytest.raises(AppError) as caught:
+        run_one(cfg, cfg.checks["x"], extra=[])
+    assert str(cfg.baseline_path) in str(caught.value)
+    # nothing was started, so there is no half-written run left behind
+    assert not cfg.runs_dir.exists()
+
+
+def test_cli_run_refuses_a_corrupt_baseline_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit 2 and one `ckdn:` line, like every other refusal in the CLI."""
+    cfg = _corrupt_baseline(tmp_path)
+    _never_runs(monkeypatch)
+    assert cli.main(_cli(cfg, tmp_path, "run", "x", "--quiet")) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ckdn: ")
+    assert "b.json" in err
+    assert not cfg.runs_dir.exists()
+
+
+def test_cli_baseline_refuses_a_corrupt_baseline_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`ckdn baseline` reads the same file and must refuse it the same way."""
+    cfg = _corrupt_baseline(tmp_path)
+    _never_runs(monkeypatch)
+    assert cli.main(_cli(cfg, tmp_path, "baseline", "x")) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ckdn: ")
+    assert "b.json" in err
+    # the file it could not read is left exactly as it was found
+    assert cfg.baseline_path is not None
+    assert cfg.baseline_path.read_text(encoding="utf-8") == "not json at all {{{"
+    assert not cfg.runs_dir.exists()

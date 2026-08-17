@@ -32,6 +32,7 @@ from ckdn.app import (
     get_digest,
     list_checks,
     list_runs,
+    load_baseline,
     run_all,
     run_check,
 )
@@ -213,6 +214,11 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     baseline_path = cfg.baseline_path
     if baseline_path is None:
         return _fail('set `baseline = "…"` under [run] in ckdn.toml first')
+    # Same refusal as `init` and `lock-config`, and made here so it lands
+    # before any target runs: `baseline.save` writes with a bare `write_text`,
+    # so a typo used to surface as a traceback once every check had executed.
+    if not baseline_path.parent.is_dir():
+        return _fail(f"no such directory: {baseline_path.parent}")
     check = cfg.checks.get(args.check)
     if check is None:
         return _fail(
@@ -221,7 +227,10 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     targets = (
         [cfg.checks[m] for m in (check.members or ())] if check.is_alias else [check]
     )
-    current = baseline.load(baseline_path)
+    # Before the first target runs: an unusable baseline is refused while
+    # nothing has been spent, and the file this command exists to update is
+    # never rewritten from a document it could not read in the first place.
+    current = load_baseline(baseline_path)
     for target in targets:
         result = app_run_one(cfg, target, extra=[])
         if result.digest.get("interrupted"):
