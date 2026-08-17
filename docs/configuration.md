@@ -86,7 +86,8 @@ seconds — a TOML number, never a string. A timeout yields `rc=124` and status
 partial evidence is not a verdict.
 
 Most other keys are passed to the parser as options (`fail_under`,
-`score_fail_under`, `fail_levels`, …). Two are not just parser options:
+`score_fail_under`, `fail_levels`, …); `fail_fast` is rejected outright on an
+atomic check. Two more are not just parser options:
 
 - **`env`** is reserved and never reaches the parser (see below).
 - **`top`** does reach the parser, but ckdn reads it too: it overrides
@@ -143,10 +144,12 @@ into the run directory.
 ## Command policy
 
 Default `workspace`: before any subprocess starts, path-like argv tokens must
-resolve inside the invocation `cwd` (`--cwd` / `CKDN_CWD`). `..` escapes are
-rejected, as is anything under `/etc`, `/proc`, `/sys`, `/dev`, or the home
-directories `.ssh`, `.aws`, `.gnupg`, `.netrc`, `.docker` and `.kube` — that
-denylist is the whole of it. MCP `extra_args` are subject to the same rules.
+resolve inside the invocation `cwd` (`--cwd` / `CKDN_CWD`). `..` escapes and
+absolute paths outside cwd are rejected by that containment check. A second,
+narrower denylist — `/etc`, `/proc`, `/sys`, `/dev` and `~/.ssh`, `~/.aws`,
+`~/.gnupg`, `~/.netrc`, `~/.docker`, `~/.kube` — applies to paths that pass
+containment, so it only bites when cwd is itself inside one of them. MCP
+`extra_args` are subject to the same rules.
 
 The three settings are not a spectrum from loose to strict:
 
@@ -156,12 +159,15 @@ The three settings are not a spectrum from loose to strict:
 - `off` is the only setting that widens, and it drops both conditions. Use it
   only when you accept full subprocess scope.
 
-The built-in prefix set is exactly `uv run `, `uvx `, `true` and `false` — the
-last two are whole commands, matched exactly rather than as prefixes. Custom
-`[run.command_allowlist].prefixes` **replace** that set instead of extending
-it, so list every prefix you still need. Uncommenting the starter's
-`prefixes = ["make ", "./scripts/"]` blocks every check the starter ships,
-because they all begin `uv run `.
+The built-in prefix set is exactly `uv run `, `uvx `, `true` and `false`. The
+last two carry no trailing space, so they match on a word boundary — the bare
+command, or the command followed by a space and arguments: `truex` is rejected,
+`true --wat` is not. Custom `[run.command_allowlist].prefixes` **replace** that
+set instead of extending it, so list every prefix you still need. Uncommenting
+the starter's `prefixes = ["make ", "./scripts/"]` blocks every check the
+starter ships: seven begin `uv run `, and `[check.lock]` (`uv lock --check`)
+matches neither prefix. Note that `uv lock --check` is outside the built-in set
+too, so `allowlist` blocks it even with no custom `prefixes`.
 
 A rejected check is not an exception and does not abort the run. It gets a
 normal run directory and digest, an empty `full.log`, `rc` 126 and status

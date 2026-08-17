@@ -38,10 +38,12 @@ The aggregate contract:
   the aggregate itself — you do not have to open its digest to find out that
   the red was never a verdict.
 - **`rc`** — `130` for an interrupted series, whatever the members returned;
-  otherwise the first member's nonzero exit code (clamped 1–255), else `1` if
-  any member is non-green while its own `rc` was `0` (gate failure /
-  mismatch), else `0`. It is the process exit code too — except under
-  `--gate`, which exits on the baseline gate instead of on execution.
+  otherwise the first member's nonzero exit code, with anything outside
+  `1..255` replaced by `1`; else `1` if any member is non-green while its own
+  `rc` was `0` (gate failure / mismatch), else `0`. It is the process exit code
+  too — except under `--gate`, where a `pass` / `fail` baseline gate supplies
+  the exit instead. With no baseline configured, or an `unavailable` gate, the
+  execution exit still stands.
 - **`interrupted`** — present, always `true`, when Ctrl-C cut the series
   short. The members after it were never attempted, and an interrupt ends the
   sequence even with `fail_fast = false`: once you have stopped the run, the
