@@ -56,7 +56,14 @@ Out of scope (unless you can show a concrete exploit path):
   ``resolve()`` and must stay inside the run directory; absolute paths such
   as ``/etc/passwd``, ``..`` segments, and symlink escapes are rejected before
   any read (limits damage from a compromised agent editing check options).
-- Command argv paths are confined to the workspace ``cwd`` by default; extend
-  with ``command_policy = "off"`` only when you accept full subprocess scope.
-  Commit ``ckdn.lock.toml`` and run ``ckdn verify-config --locked`` in CI when
-  agents can edit ``ckdn.toml``.
+- Command argv paths are confined to the workspace ``cwd`` by default
+  (``command_policy = "workspace"``). ``"allowlist"`` keeps that containment
+  and adds a second condition — the configured command must match a prefix in
+  ``[run.command_allowlist].prefixes`` — so it narrows the default rather than
+  widening it; use it where agents can edit ``ckdn.toml`` and you want to pin
+  *which* tools may run. Custom ``prefixes`` **replace** the built-in set
+  (``uv run ``, ``uvx ``, ``true``, ``false``); they do not extend it, so list
+  every prefix you still need. ``"off"`` is the only setting that widens the
+  default, and it drops both conditions: use it only when you accept full
+  subprocess scope. Commit ``ckdn.lock.toml`` and run
+  ``ckdn verify-config --locked`` in CI when agents can edit ``ckdn.toml``.

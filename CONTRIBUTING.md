@@ -15,7 +15,14 @@ uv run pytest -q --cov=src --cov-report=term-missing
 uv run ruff check src tests
 uv run mypy src/ckdn
 uv run ty check src/ckdn
+uv run ckdn verify-config --locked
 ```
+
+`verify-config --locked` is the one CI gate no hook covers. `ckdn.lock.toml`
+is committed and CI runs the check, but `.pre-commit-config.yaml` has no
+equivalent — so editing a `command =` line in `ckdn.toml` passes every local
+check and fails CI. The remedy is `uv run ckdn lock-config`; commit the
+regenerated lock with the config change.
 
 ckdn checks itself: `uv run ckdn run --all` drives the same tools through the
 config in `ckdn.toml` and prints one aggregate digest.
