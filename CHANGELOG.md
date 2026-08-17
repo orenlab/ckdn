@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.2] - 2026-08-17
 
-Correctness release: ten defects found by auditing the documentation against
-the implementation. Digest schemas and the CLI surface are unchanged.
+Correctness release: twelve defects found by auditing the documentation against
+the implementation. Digest schemas are unchanged.
 
 ### Fixed
 
@@ -41,6 +41,15 @@ the implementation. Digest schemas and the CLI surface are unchanged.
   configured value, and is refused (exit `2`) on an atomic check
 - `meta.json` was missing from every digest's `artifacts`: the run directory
   was listed before that file was written
+- An unusable `[run].baseline` file — unparseable JSON, a top-level non-object,
+  or one that cannot be read — crashed with a traceback *after* the check had
+  run, leaving a run directory with no `digest.json` that `prune` then kept
+  forever. It is now read before the tool starts and refused as `ckdn: …`,
+  exit `2`. Malformed entries inside a valid document stay tolerated
+- A `[run].baseline` or `lock-config -o` path into a directory that does not
+  exist raised `FileNotFoundError` and exited `1` — the code that means "this
+  check is red". Both now refuse with `no such directory: …` and exit `2`,
+  before anything runs
 
 ### Changed
 
