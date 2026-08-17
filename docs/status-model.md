@@ -7,14 +7,21 @@ icon: lucide/traffic-cone
 Every run reconciles the exit code (`rc`) against the parser into exactly one
 status. **`pass` is the only green state.**
 
-| rc  | parser                                    | status           | meaning                          |
-|-----|-------------------------------------------|------------------|----------------------------------|
-| 0   | confident, no findings, gates ok          | `pass`           | green                            |
+| rc  | parser                                     | status           | meaning                          |
+|-----|--------------------------------------------|------------------|----------------------------------|
+| 0   | confident, no findings, gates ok           | `pass`           | green                            |
 | 0   | gate failed (e.g. coverage < `fail_under`) | `fail`           | tool happy, policy not           |
-| ≠ 0 | findings extracted                        | `fail`           | normal red + evidence            |
-| ≠ 0 | no findings, evidence expected            | `error`          | infra / collection — fix the run |
-| ≠ 0 | could not interpret output                | `error`          | same, with log tail              |
-| 0   | findings anyway / unreadable              | `parse_mismatch` | green untrusted                  |
+| ≠ 0 | findings extracted                         | `fail`           | normal red + evidence            |
+| ≠ 0 | no findings, none expected (`generic`)     | `fail`           | the exit code *is* the evidence  |
+| ≠ 0 | no findings, evidence expected             | `error`          | infra / collection — fix the run |
+| ≠ 0 | could not interpret output                 | `error`          | same, with log tail              |
+| 0   | findings anyway / unreadable               | `parse_mismatch` | green untrusted                  |
+
+The two `≠ 0, no findings` rows differ only in what the parser promised. A
+parser that never produces findings declares `evidence_expected=False` — the
+`generic` parser, for builds, deploys and scripts — so its silence is not a
+collection failure and the run is a plain `fail`. Every other parser owes
+evidence for a red exit, and its absence is the failure.
 
 Invariants (enforced by `ckdn.reconcile`, covered by contract tests):
 
@@ -25,9 +32,18 @@ Invariants (enforced by `ckdn.reconcile`, covered by contract tests):
 
 ## Exit-code contract
 
-`ckdn run` exits with the original command's code (clamped 1–255), so it drops
-into any hook or CI slot where the raw command used to be. One extra rule:
-`rc == 0` with a non-green status exits `1`.
+`ckdn run` exits with the original command's code, so it drops into any hook or
+CI slot where the raw command used to be. Two extra rules: `rc == 0` with a
+non-green status exits `1`, and a code outside `1–255` is **replaced** by `1`
+rather than folded into range — `rc = 300` exits `1`, and so does the negative
+code a signal-killed child reports (`-11` after `SIGSEGV`). The digest keeps the
+real number in `rc` either way; only the process exit is constrained.
+
+`--gate` replaces this contract wholesale. The exit becomes the
+[baseline gate](baselines.md) decision: `pass` → `0`, `fail` → `1`,
+`unavailable` → the honest execution exit above. A run without a gate — no
+`[run].baseline` configured — also falls back to that exit, so adding `--gate`
+to a project that has no baseline changes nothing.
 
 When ckdn owns the failure it uses conventional synthetic codes — `124`
 timeout, `126` blocked by command policy, `127` command not found, `130`
