@@ -91,19 +91,25 @@ uv add --dev ckdn
 ```bash
 cd your-project
 ckdn init                      # writes starter ckdn.toml
+# edit commands / parsers / aliases to match the project
 echo '.agent-runs/' >> .gitignore
 
 ckdn checks                    # list configured checks
 ckdn doctor                    # pre-flight: tools on PATH, commands fit parsers
 ckdn run ruff                  # one atomic check → compact digest on stdout
-ckdn run lint                  # alias → members (e.g. ruff, pylint)
+ckdn run lint                  # alias → its members in order
 ckdn run --all                 # every atomic check → one aggregate
-ckdn show                      # pretty-print latest digest
+ckdn show                      # pretty-print the latest run's digest
 ```
 
-`ckdn run` exits with the original command’s code, so it slots into any hook or
-CI step where the raw command used to be — with a bounded, schema-backed
-digest as a side effect.
+The starter config enables checks a given project may not have (`coverage`,
+`mypy`, `pre_commit`, …); trim it first, or `--all` reports them as `error`.
+
+`ckdn run` passes the original command’s nonzero exit code through, so it slots
+into any hook or CI step where the raw command used to be — with a bounded,
+schema-backed digest as a side effect. The one exception is the point of the
+tool: a command that exits `0` on a non-green digest exits `1`. A code outside
+1–255 (a signal death) becomes `1`, not the nearest bound.
 
 ## Documentation
 
