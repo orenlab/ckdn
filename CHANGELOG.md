@@ -9,6 +9,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-08-17
+
+Correctness release. Three gates that could report green on a red run are
+fixed, and the MCP server no longer advertises a working-directory contract it
+does not honour. Digest schemas and the CLI surface are unchanged.
+
+### Fixed
+
+- `--gate` no longer exits `0` on a failure the baseline cannot account for.
+  `gate()` treated "no *new* findings" as "nothing wrong", so a run that failed
+  with no classified findings gated `pass`: an rc-only (`generic`) check that
+  simply exited nonzero, and a coverage `fail_under` breach, which is reported
+  through `gate_failures` and produces no finding at all. A policy-gate breach
+  now gates `fail`, and a non-`pass` execution with nothing for the baseline to
+  classify gates `unavailable`, so CI falls back to the honest execution exit.
+  Execution truth (the digest `status`) is still never touched
+- A mistyped scalar in `ckdn.toml` now fails as a `ConfigError` (`ckdn: …`,
+  exit `2`) instead of escaping as a raw `ValueError` traceback. Affected
+  `[check].timeout` and the four `[run]` integers (`keep`, `top`,
+  `max_snippet_lines`, `log_tail_lines`)
+- An alias `fail_fast` must be a real TOML boolean. `fail_fast = "false"` was
+  coerced to `true`, silently skipping members the config asked to run
+- The MCP server advertised the working-directory precedence as
+  `cwd → CKDN_CWD → --cwd`, while `ServerContext.resolve_cwd` resolves
+  `cwd → --cwd → CKDN_CWD`. The strings ship to every client as the server
+  `instructions` and inside all six tool descriptions, so an agent reasoning
+  from them could run checks against the wrong tree. The advertised order is
+  now pinned to the resolver's observed behaviour by a test, not by a copy of
+  the claim
+
+### Changed
+
+- The four `[run]` integer settings reject a float instead of truncating it:
+  `keep = 2.5` was silently read as `2`
+- Dev and optional dependency floors raised: `fastmcp>=3.4.7`, `mypy>=2.3.1`,
+  `ruff>=0.16.3`, `ty>=0.0.72`, `pre-commit>=4.6.2`
+
 ## [1.3.1] - 2026-08-09
 
 Maintenance release. No behaviour changes: the CLI, the digest schemas and the
@@ -186,7 +223,8 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/orenlab/ckdn/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/orenlab/ckdn/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/orenlab/ckdn/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/orenlab/ckdn/compare/v1.1.1...v1.2.0
