@@ -687,6 +687,31 @@ def test_baseline_rejects_an_unknown_check(
     assert "configured: ok" in err
 
 
+def test_baseline_refuses_a_missing_output_directory_before_running(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `[run].baseline` path into nowhere is a typo, caught before the cost.
+
+    `baseline.save` writes with a bare `write_text`, so this used to surface as
+    a `FileNotFoundError` traceback and exit 1 -- the "this check is red" code
+    -- *after* every target had already run.
+    """
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        '[run]\nruns_dir = "runs"\nbaseline = "missing/dir/baseline.json"\n\n'
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+    rc = cli.main(["baseline", "ok", "--config", str(cfg), "--cwd", str(tmp_path)])
+    assert rc == 2
+    assert (
+        f"ckdn: no such directory: {tmp_path / 'missing' / 'dir'}"
+        in capsys.readouterr().err
+    )
+    # Refused before the check ran: no run directory, nothing spent.
+    assert not (tmp_path / "runs").exists()
+
+
 @pytest.mark.parametrize(
     ("check_top", "shown"),
     # the [run].top fallback, and a per-check override of it

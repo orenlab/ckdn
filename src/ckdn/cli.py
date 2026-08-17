@@ -214,6 +214,16 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     baseline_path = cfg.baseline_path
     if baseline_path is None:
         return _fail('set `baseline = "…"` under [run] in ckdn.toml first')
+    # Same refusal as `init` and `lock-config`, and made here so it lands
+    # before any target runs: `baseline.save` writes with a bare `write_text`,
+    # so a typo used to surface as a traceback once every check had executed.
+    if not baseline_path.parent.is_dir():
+        return _fail(f"no such directory: {baseline_path.parent}")
+    # Same refusal as `init`, and made here so it lands before any target
+    # runs: `baseline.save` writes with a bare `write_text`, so a typo used to
+    # surface as a traceback once every check had already executed.
+    if not baseline_path.parent.is_dir():
+        return _fail(f"no such directory: {baseline_path.parent}")
     check = cfg.checks.get(args.check)
     if check is None:
         return _fail(
