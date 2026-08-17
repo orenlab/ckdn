@@ -80,11 +80,6 @@ def save(path: Path, baseline: dict[str, set[str]]) -> None:
     )
 
 
-def fingerprints_for(check: str, findings: list[dict[str, Any]]) -> set[str]:
-    """Fingerprints for a list of finding dicts (``Finding.to_dict()`` shape)."""
-    return {fingerprint(check, finding) for finding in findings}
-
-
 def gate(
     execution_status: str,
     parser_ok: bool,

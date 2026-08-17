@@ -62,20 +62,28 @@ def _annotate_baseline(
     execution_status: str,
     result: ParseResult,
     digest: dict[str, Any],
-) -> None:
+) -> frozenset[str]:
     """Classify findings against the baseline and attach ``baseline``/``gate``.
 
     Execution truth (``digest['status']``) is never touched — see
     :mod:`ckdn.baseline`. Only runs when ``[run].baseline`` is configured.
+
+    Returns the fingerprints of every finding of the run (empty when no
+    baseline is configured). They are computed here anyway, and handing them
+    back is what lets ``ckdn baseline`` record the complete set without asking
+    the digest to carry an unbounded findings list.
     """
     baseline_path = cfg.baseline_path
     if baseline_path is None:
-        return
+        return frozenset()
     accepted = baseline.load(baseline_path).get(check_name, set())
+    seen: set[str] = set()
     new = 0
     known = 0
     for finding in result.findings:
-        if baseline.fingerprint(check_name, finding.to_dict()) in accepted:
+        fingerprint = baseline.fingerprint(check_name, finding.to_dict())
+        seen.add(fingerprint)
+        if fingerprint in accepted:
             known += 1
         else:
             new += 1
@@ -91,6 +99,7 @@ def _annotate_baseline(
         known_count=known,
         gate_failures=result.gate_failures,
     )
+    return frozenset(seen)
 
 
 @contextlib.contextmanager
@@ -290,7 +299,7 @@ def _run_atomic(
     except ValueError:
         run_dir_rel = run_dir.as_posix()
 
-    def _finalize() -> tuple[str, dict[str, Any]]:
+    def _finalize() -> tuple[str, dict[str, Any], frozenset[str]]:
         # Building the documents belongs inside the protected step, not just
         # writing them: a Ctrl-C in reconcile or build_digest would otherwise
         # abandon a run directory that has a log but no digest — the same
@@ -314,13 +323,13 @@ def _run_atomic(
             tail_lines=cfg.run.log_tail_lines,
             artifacts=list_artifacts(run_dir),
         )
-        _annotate_baseline(cfg, check.name, status, result, digest)
+        fingerprints = _annotate_baseline(cfg, check.name, status, result, digest)
         write_documents(run_dir, digest, meta)
         update_latest(cfg.runs_dir, run_dir)
         prune(cfg.runs_dir, cfg.run.keep)
-        return status, digest
+        return status, digest, fingerprints
 
-    status, digest = _uninterruptible(_finalize)
+    status, digest, fingerprints = _uninterruptible(_finalize)
 
     return AtomicRunResult(
         check=check.name,
@@ -329,6 +338,7 @@ def _run_atomic(
         run_dir=run_dir,
         digest=digest,
         exit_code=exit_from_outcome(outcome.rc, status),
+        fingerprints=fingerprints,
     )
 
 

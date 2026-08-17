@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import dataclasses
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -50,11 +49,6 @@ from ckdn.digest import dump_json, dump_json_pretty
 from ckdn.preflight import diagnose
 from ckdn.runner import RC_INTERRUPTED, prune
 from ckdn.schema import load_schema, schema_ids
-
-#: ``top`` for a baseline run. The baseline records every finding a check
-#: produced, so the digest's top-N slice must not truncate it; no real tool
-#: reports a billion findings, and a plain cap keeps the digest shape unchanged.
-BASELINE_TOP = 1_000_000_000
 
 
 def _fail(message: str) -> int:
@@ -207,11 +201,7 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     )
     current = baseline.load(baseline_path)
     for target in targets:
-        # Record every finding, not just the digest's top-N slice.
-        uncapped = dataclasses.replace(
-            target, options={**target.options, "top": BASELINE_TOP}
-        )
-        result = app_run_one(cfg, uncapped, extra=[])
+        result = app_run_one(cfg, target, extra=[])
         if result.digest.get("interrupted"):
             return _fail(
                 f"'{target.name}' was interrupted; its findings are partial and "
@@ -226,9 +216,10 @@ def cmd_baseline(args: argparse.Namespace) -> int:
                 f"'{target.name}' finished {result.status} — its findings are "
                 f"not trustworthy enough to accept. {baseline_path} is unchanged"
             )
-        fingerprints = baseline.fingerprints_for(
-            target.name, result.digest.get("findings", [])
-        )
+        # Every finding of the run, not the digest's top-N slice: the run
+        # itself stays a normal, bounded run, and the complete set travels
+        # beside its digest.
+        fingerprints = set(result.fingerprints)
         current[target.name] = fingerprints
         print(f"recorded {len(fingerprints)} finding(s) for {target.name}")
     baseline.save(baseline_path, current)

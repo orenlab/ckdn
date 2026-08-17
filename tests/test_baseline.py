@@ -9,6 +9,7 @@ for CI — but only when the evidence is trustworthy.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -20,13 +21,13 @@ from ckdn.app import run_alias, run_one
 from ckdn.baseline import (
     combine_gate,
     fingerprint,
-    fingerprints_for,
     gate,
     gate_exit,
     load,
     save,
 )
 from ckdn.config import Config, load_config
+from ckdn.digest import META_NAME
 from ckdn.parsers.base import Finding, ParseResult
 from ckdn.runner import LOG_NAME, RunOutcome
 from ckdn.schema import load_schema
@@ -156,6 +157,11 @@ def test_combine_gate() -> None:
 # --- integration: execution truth is preserved ----------------------------
 
 
+def _fps(findings: list[Finding]) -> set[str]:
+    """The accepted-fingerprint set a baseline file would hold for check ``x``."""
+    return {fingerprint("x", finding.to_dict()) for finding in findings}
+
+
 def _cfg_with_baseline(tmp_path: Path) -> Config:
     (tmp_path / "ckdn.toml").write_text(
         '[run]\nruns_dir = ".agent-runs"\nbaseline = "b.json"\n'
@@ -214,7 +220,7 @@ def test_baseline_preserves_execution_truth_and_gates(
 
     # accept it into the baseline
     assert cfg.baseline_path is not None
-    save(cfg.baseline_path, {"x": fingerprints_for("x", [finding.to_dict()])})
+    save(cfg.baseline_path, {"x": _fps([finding])})
 
     # same finding is now known: execution truth UNCHANGED, gate passes
     second = run_one(cfg, cfg.checks["x"], extra=[]).digest
@@ -224,6 +230,65 @@ def test_baseline_preserves_execution_truth_and_gates(
     assert second["findings"][0]["baselined"] is True
     # the digest with baseline/gate still conforms to the published schema
     Draft202012Validator(load_schema(DIGEST_SCHEMA)).validate(second)
+
+
+def test_baseline_counts_every_finding_and_survives_an_empty_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`known` / `new` are counts, not flags — and zero findings is not a crash."""
+    cfg = _cfg_with_baseline(tmp_path)
+    known = [Finding(id=f"K{i}", kind="k", message=f"k{i}") for i in range(2)]
+    unknown = [Finding(id=f"N{i}", kind="k", message=f"n{i}") for i in range(2)]
+
+    class _FP:
+        name = "fp"
+
+        def parse(self, ctx: object) -> ParseResult:
+            return ParseResult(parser_ok=True, findings=[*known, *unknown])
+
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _FP())
+    _stub_execute(monkeypatch, rc=1)
+    assert cfg.baseline_path is not None
+    save(cfg.baseline_path, {"x": _fps(known)})
+
+    result = run_one(cfg, cfg.checks["x"], extra=[])
+    assert result.digest["baseline"] == {"known": 2, "new": 2}
+    # classifying findings does not disturb the run's provenance document
+    meta = json.loads((result.run_dir / META_NAME).read_text(encoding="utf-8"))
+    assert meta["check"] == "x" and meta["parser"] == "fp"
+
+    # A check with no findings at all writes no `findings` key; classifying
+    # that digest must still work.
+    class _Empty:
+        name = "fp"
+
+        def parse(self, ctx: object) -> ParseResult:
+            return ParseResult(parser_ok=True)
+
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _Empty())
+    _stub_execute(monkeypatch, rc=0)
+    empty = run_one(cfg, cfg.checks["x"], extra=[]).digest
+    assert "findings" not in empty and "baseline" not in empty
+    assert empty["status"] == "pass" and empty["gate"]["status"] == "pass"
+
+
+def test_baseline_never_masks_a_parse_mismatch_a_confident_parser_produced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rc 0 with findings is untrusted evidence even when the parser was sure."""
+    cfg = _cfg_with_baseline(tmp_path)
+    finding = Finding(id="F", kind="k", message="m")
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _finding_parser(finding))
+    _stub_execute(monkeypatch, rc=0)
+    assert cfg.baseline_path is not None
+    save(cfg.baseline_path, {"x": _fps([finding])})
+
+    digest = run_one(cfg, cfg.checks["x"], extra=[]).digest
+    # The finding is accepted and the parser was confident, so the only thing
+    # standing between this run and a green gate is the execution status.
+    assert digest["baseline"] == {"known": 1, "new": 0}
+    assert digest["status"] == "parse_mismatch"
+    assert digest["gate"]["status"] == "unavailable"
 
 
 def test_baseline_gate_unavailable_when_evidence_untrusted(
@@ -238,7 +303,7 @@ def test_baseline_gate_unavailable_when_evidence_untrusted(
     _stub_execute(monkeypatch, rc=0)
     # baseline already contains the finding
     assert cfg.baseline_path is not None
-    save(cfg.baseline_path, {"x": fingerprints_for("x", [finding.to_dict()])})
+    save(cfg.baseline_path, {"x": _fps([finding])})
 
     digest = run_one(cfg, cfg.checks["x"], extra=[]).digest
     assert digest["status"] == "parse_mismatch"
@@ -278,7 +343,7 @@ def test_an_alias_reports_one_gate_for_all_its_members(
 
     # x has accepted the finding, y has not.
     assert cfg.baseline_path is not None
-    save(cfg.baseline_path, {"x": fingerprints_for("x", [finding.to_dict()])})
+    save(cfg.baseline_path, {"x": _fps([finding])})
 
     aggregate = run_alias(cfg, cfg.checks["both"]).aggregate
     assert aggregate["status"] == "fail"

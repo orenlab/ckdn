@@ -819,3 +819,14 @@ def test_a_worker_thread_cannot_hold_sigint_and_runs_anyway(tmp_path: Path) -> N
     thread.start()
     thread.join()
     assert ran == ["step"]
+
+
+def test_a_result_carries_an_empty_fingerprint_set_by_default() -> None:
+    """Never ``None``: ``ckdn baseline`` reads this set to write the baseline,
+    and an absent one must record nothing rather than crash."""
+    from ckdn.app.types import AtomicRunResult
+
+    result = AtomicRunResult(
+        check="x", status="pass", rc=0, run_dir=Path("."), digest={}, exit_code=0
+    )
+    assert result.fingerprints == frozenset()
