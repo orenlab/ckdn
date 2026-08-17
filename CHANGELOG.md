@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.2] - 2026-08-17
 
-Correctness release. Three gates that could report green on a red run are
-fixed, and the MCP server no longer advertises a working-directory contract it
-does not honour. Digest schemas and the CLI surface are unchanged.
+Correctness release. Ten defects found by a full audit of the documentation
+against the implementation: gates that could report green on a red run, two
+parsers that could mark a check permanently untrusted, a flag that was silently
+discarded, and an MCP contract the server did not honour. Digest schemas are
+unchanged.
 
 ### Fixed
 
@@ -38,6 +40,34 @@ does not honour. Digest schemas and the CLI surface are unchanged.
   from them could run checks against the wrong tree. The advertised order is
   now pinned to the resolver's observed behaviour by a test, not by a copy of
   the claim
+- `bandit` runs using the `--severity-level` / `--confidence-level` flags this
+  parser recommends no longer report `parse_mismatch` forever. bandit filters
+  `results` but not `metrics`, so the metrics cross-check counted issues the
+  report deliberately omitted. It now counts only the ranks `results` actually
+  shows, and abstains where marginals cannot reconstruct the joint count —
+  the guard still fires when a parse genuinely loses findings
+- `pylint` informational messages (`useless-suppression`, `locally-disabled`)
+  are no longer findings. That class owns no bit in pylint's exit-code bitmask,
+  so a run with only informational messages exits `0` while ckdn extracted
+  findings — reported as `parse_mismatch` with no way for the user to fix it.
+  They are counted in `summary.info_count`, the contract `ty`, `mypy` and
+  `pyright` already use for warnings
+- `ckdn baseline` no longer leaves an unbounded `digest.json` as the run's
+  `latest`. It ran the check with the digest's top-N cap effectively disabled
+  so the baseline could record every finding; the complete fingerprint set now
+  travels beside a normally bounded digest instead. A 40 000-finding run wrote
+  12.6 MB before and 6.5 kB after, with all 40 000 fingerprints still recorded
+- `ckdn init` honours `--config`, `--cwd` and `CKDN_CWD` like every other
+  command. It always wrote to the process directory, so under the documented
+  `CKDN_CWD` setup it created a config `ckdn run` would never look at — and
+  then advised running `ckdn init`
+- `--fail-fast` reaches a named alias. It was read only on the `--all` path, so
+  for an alias the flag was accepted and discarded. It now overrides the
+  alias's configured `fail_fast`, and is refused with exit `2` on an atomic
+  check, where there is no sequence to stop
+- `meta.json` appears in a digest's `artifacts` again. The run directory was
+  listed before the provenance document was written, so the file `digests.md`
+  tells consumers to read was not discoverable from the digest that indexes it
 
 ### Changed
 
