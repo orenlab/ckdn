@@ -167,6 +167,94 @@ def test_fail_fast_false_runs_all(
     assert [m["check"] for m in aggregate["members"]] == ["fail_a", "pass_b"]
 
 
+def test_fail_fast_flag_overrides_alias_config(
+    tmp_path: Path,
+    fake_execute: dict[str, list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--fail-fast` used to be read only under `--all` and silently dropped
+    for a named alias, so `fail_fast = false` won regardless."""
+    fake_execute["fail_a"] = [1]
+    fake_execute["pass_b"] = [0]
+    cfg_path = _cfg(
+        tmp_path,
+        _two_member_alias(first="fail_a", second="pass_b", fail_fast=False),
+    )
+    assert cli.main(["run", "group", "--config", str(cfg_path), "--fail-fast"]) == 1
+    docs = _load_json_stream(capsys.readouterr().out)
+    assert len(docs) == 1
+    assert [m["check"] for m in docs[0]["members"]] == ["fail_a"]
+
+
+@pytest.mark.parametrize(
+    ("argv_extra", "expected"),
+    [([], ["fail_a", "pass_b"]), (["--fail-fast"], ["fail_a"])],
+)
+def test_all_honours_the_flag_through_the_cli(
+    tmp_path: Path,
+    fake_execute: dict[str, list[int]],
+    capsys: pytest.CaptureFixture[str],
+    argv_extra: list[str],
+    expected: list[str],
+) -> None:
+    """`--all` reached `run_all` but no CLI test ever passed the flag, so
+    dropping it there was invisible."""
+    fake_execute["fail_a"] = [1]
+    fake_execute["pass_b"] = [0]
+    cfg_path = _cfg(
+        tmp_path,
+        _two_member_alias(first="fail_a", second="pass_b"),
+    )
+    argv = ["run", "--all", "--config", str(cfg_path), *argv_extra]
+    assert cli.main(argv) == 1
+    docs = _load_json_stream(capsys.readouterr().out)
+    assert [m["check"] for m in docs[0]["members"]] == expected
+
+
+def test_no_flag_keeps_configured_fail_fast_false(
+    tmp_path: Path,
+    fake_execute: dict[str, list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The override is opt-in: without the flag the config still decides."""
+    fake_execute["fail_a"] = [1]
+    fake_execute["pass_b"] = [0]
+    cfg_path = _cfg(
+        tmp_path,
+        _two_member_alias(first="fail_a", second="pass_b", fail_fast=False),
+    )
+    assert cli.main(["run", "group", "--config", str(cfg_path)]) == 1
+    docs = _load_json_stream(capsys.readouterr().out)
+    assert [m["check"] for m in docs[0]["members"]] == ["fail_a", "pass_b"]
+
+
+def test_fail_fast_rejected_for_an_atomic_check(
+    tmp_path: Path,
+    fake_execute: dict[str, list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No sequence to stop early — say so instead of ignoring the flag."""
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n',
+    )
+    assert cli.main(["run", "a", "--config", str(cfg_path), "--fail-fast"]) == 2
+    assert "no sequence to stop early" in capsys.readouterr().err
+
+
+def test_fail_fast_unknown_check_still_reports_unknown(
+    tmp_path: Path,
+    fake_execute: dict[str, list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n',
+    )
+    assert cli.main(["run", "nope", "--config", str(cfg_path), "--fail-fast"]) == 2
+    assert "unknown check 'nope'" in capsys.readouterr().err
+
+
 def test_alias_rejects_extra_args(tmp_path: Path) -> None:
     cfg_path = _cfg(
         tmp_path,

@@ -454,3 +454,18 @@ def test_ckdn_cwd_env_var_selects_the_working_directory(
     assert cfg.cwd == project.resolve()
     # An explicit cwd still wins over the environment.
     assert load_config(path, cwd=tmp_path).cwd == tmp_path.resolve()
+
+
+def test_config_is_looked_up_under_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no explicit path, the config lives under the *resolved* cwd — the
+    explicit one, not whatever the environment or the process says."""
+    project = tmp_path / "project"
+    project.mkdir()
+    path = _write(project, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CKDN_CWD", str(tmp_path))
+    cfg = load_config(cwd=project)
+    assert cfg.config_path == path.resolve()
+    assert cfg.cwd == project.resolve()

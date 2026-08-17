@@ -33,6 +33,10 @@ class AliasExtraArgsError(AppError):
     """Aliases do not accept extra command arguments."""
 
 
+class FailFastNotApplicableError(AppError):
+    """``fail_fast`` was asked for where no sequence of checks runs."""
+
+
 class RunNotFoundError(AppError):
     """No matching run directory."""
 

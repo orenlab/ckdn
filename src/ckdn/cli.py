@@ -43,6 +43,7 @@ from ckdn.config import (
     Config,
     ConfigError,
     load_config,
+    resolve_config_path,
 )
 from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
@@ -56,9 +57,16 @@ def _fail(message: str) -> int:
     return 2
 
 
+def _config_arg(args: argparse.Namespace) -> Path | None:
+    return Path(args.config) if args.config else None
+
+
+def _cwd_arg(args: argparse.Namespace) -> Path | None:
+    return Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
+
+
 def _load(args: argparse.Namespace) -> Config:
-    cwd = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
-    return load_config(Path(args.config) if args.config else None, cwd=cwd)
+    return load_config(_config_arg(args), cwd=_cwd_arg(args))
 
 
 def run_one(
@@ -106,7 +114,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.check is None:
         return _fail("specify a check name, or --all to run every atomic check")
     try:
-        outcome = run_check(cfg, args.check, extra=list(args.extra))
+        outcome = run_check(
+            cfg,
+            args.check,
+            extra=list(args.extra),
+            # ``store_true`` cannot tell "absent" from "explicitly false" and
+            # there is no ``--no-fail-fast``, so only the flag's *presence*
+            # overrides the alias's configured ``fail_fast``.
+            fail_fast=True if args.fail_fast else None,
+        )
     except AppError as exc:
         return _fail(str(exc))
     if isinstance(outcome, AliasRunResult):
@@ -283,9 +299,16 @@ def cmd_schema(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    target = Path.cwd() / CONFIG_NAME
+    """Write a starter config where every other command will look for it.
+
+    Resolution is :func:`ckdn.config.resolve_config_path`, the same function
+    :func:`load_config` uses, so ``init`` and ``run`` cannot disagree.
+    """
+    target = resolve_config_path(_config_arg(args), cwd=_cwd_arg(args))
     if target.exists():
         return _fail(f"{target} already exists; refusing to overwrite")
+    if not target.parent.is_dir():
+        return _fail(f"no such directory: {target.parent}")
     target.write_text(STARTER_CONFIG, encoding="utf-8")
     print(f"wrote {target}")
     print("reminder: add `.agent-runs/` to .gitignore")
@@ -322,7 +345,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--fail-fast",
         action="store_true",
-        help="with --all, stop at the first non-green check",
+        help="stop at the first non-green check: with --all, or overriding "
+        "an alias's fail_fast (rejected for a single atomic check)",
     )
     p_run.add_argument(
         "--gate",
@@ -364,6 +388,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_gc.set_defaults(fn=cmd_gc)
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
+    # The same --config/--cwd every config-*reading* command takes: init must
+    # write where those commands will later look, not beside the process cwd.
+    add_config(p_init)
     p_init.set_defaults(fn=cmd_init)
 
     p_baseline = sub.add_parser(

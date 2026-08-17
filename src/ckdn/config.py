@@ -411,6 +411,30 @@ def _validate_aliases(checks: dict[str, CheckConfig]) -> None:
                 )
 
 
+def resolve_cwd(cwd: Path | None = None) -> Path:
+    """Working directory for this invocation.
+
+    Explicit ``cwd`` (``--cwd``) → ``CKDN_CWD`` → the process invocation
+    directory. Always absolute.
+    """
+    if cwd is None:
+        env_cwd = os.environ.get("CKDN_CWD")
+        if env_cwd:
+            cwd = Path(env_cwd)
+    return (cwd or Path.cwd()).resolve()
+
+
+def resolve_config_path(path: Path | None = None, *, cwd: Path | None = None) -> Path:
+    """Where ``ckdn.toml`` lives for this invocation.
+
+    Explicit ``path`` (``--config``) → ``CONFIG_NAME`` under
+    :func:`resolve_cwd`. Shared by :func:`load_config` and ``ckdn init`` so
+    that the command which *writes* the config and the commands that *read*
+    it can never disagree about its location.
+    """
+    return (path or resolve_cwd(cwd) / CONFIG_NAME).resolve()
+
+
 def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
     """Load ``ckdn.toml``.
 
@@ -419,12 +443,8 @@ def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
     directory (``Path.cwd()``), not the config file's parent — so a config
     under ``/tmp`` can drive checks in a worktree via ``--cwd`` / ``CKDN_CWD``.
     """
-    if cwd is None:
-        env_cwd = os.environ.get("CKDN_CWD")
-        if env_cwd:
-            cwd = Path(env_cwd)
-    working = (cwd or Path.cwd()).resolve()
-    cfg_path = (path or working / CONFIG_NAME).resolve()
+    working = resolve_cwd(cwd)
+    cfg_path = resolve_config_path(path, cwd=working)
     if not cfg_path.exists():
         raise ConfigError(
             f"config not found: {cfg_path} (run `ckdn init` to create a starter config)"

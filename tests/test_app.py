@@ -15,8 +15,10 @@ import pytest
 from ckdn.app import (
     MAX_EVIDENCE_LIMIT,
     AliasExtraArgsError,
+    AliasRunResult,
     ArtifactError,
     DigestError,
+    FailFastNotApplicableError,
     NotAliasError,
     NotAtomicError,
     RunNotFoundError,
@@ -296,14 +298,100 @@ def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,
         '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-        '[check.g]\nmembers = ["ok"]\n',
+        '[check.two]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["ok", "two"]\n',
     )
-    with pytest.raises(UnknownCheckError):
+    with pytest.raises(UnknownCheckError) as unknown:
         run_check(cfg, "nope")
+    assert str(unknown.value) == "unknown check 'nope'; configured: g, ok, two"
     with pytest.raises(NotAtomicError):
         run_one(cfg, cfg.checks["g"], extra=[])
-    with pytest.raises(AliasExtraArgsError):
+    with pytest.raises(AliasExtraArgsError) as extra:
         run_check(cfg, "g", extra=["-x"])
+    assert str(extra.value) == (
+        "alias 'g' does not accept extra arguments; run an atomic member "
+        "check instead (members: ok, two)"
+    )
+
+
+def _stub_first_member_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=_rc_by_suffix(run_dir, "-a"),
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+
+
+_SEQUENCE_CFG = (
+    '[check.a]\ncommand = "false"\nparser = "generic"\n'
+    '[check.b]\ncommand = "true"\nparser = "generic"\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("configured", "override", "expected"),
+    [
+        (False, None, ["a", "b"]),  # config decides when nothing overrides it
+        (False, True, ["a"]),  # caller's True beats `fail_fast = false`
+        (True, None, ["a"]),
+        (True, False, ["a", "b"]),  # …and the override works both ways
+    ],
+)
+def test_run_alias_fail_fast_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured: bool,
+    override: bool | None,
+    expected: list[str],
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        _SEQUENCE_CFG + "[check.g]\n"
+        'members = ["a", "b"]\n'
+        f"fail_fast = {str(configured).lower()}\n",
+    )
+    _stub_first_member_fails(monkeypatch)
+    result = run_alias(cfg, cfg.checks["g"], fail_fast=override)
+    assert [m["check"] for m in result.aggregate["members"]] == expected
+
+
+def test_run_check_passes_fail_fast_to_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        _SEQUENCE_CFG + '[check.g]\nmembers = ["a", "b"]\nfail_fast = false\n',
+    )
+    _stub_first_member_fails(monkeypatch)
+    result = run_check(cfg, "g", fail_fast=True)
+    assert isinstance(result, AliasRunResult)
+    assert [m["check"] for m in result.aggregate["members"]] == ["a"]
+
+
+def test_run_check_rejects_fail_fast_for_atomic(tmp_path: Path) -> None:
+    cfg = _load_cfg(tmp_path, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    for override in (True, False):
+        with pytest.raises(FailFastNotApplicableError) as exc:
+            run_check(cfg, "a", fail_fast=override)
+        assert str(exc.value) == (
+            "'a' is a single check, so there is no sequence to stop early; "
+            "fail_fast applies to an alias or to a run of every check"
+        )
 
 
 def test_run_alias_aggregate(tmp_path: Path) -> None:
@@ -314,6 +402,7 @@ def test_run_alias_aggregate(tmp_path: Path) -> None:
     )
     result = run_alias(cfg, cfg.checks["g"])
     assert result.exit_code == 0
+    assert result.alias == "g"
     assert result.aggregate["schema"] == "ckdn.aggregate/1"
     assert result.aggregate["alias"] == "g"
     assert result.aggregate["status"] == "pass"
@@ -562,8 +651,9 @@ def test_run_alias_not_alias_and_status_fail(
         '[check.ok]\ncommand = "true"\nparser = "generic"\n'
         '[check.g]\nmembers = ["ok"]\n',
     )
-    with pytest.raises(NotAliasError):
+    with pytest.raises(NotAliasError) as not_alias:
         run_alias(cfg, cfg.checks["ok"])
+    assert str(not_alias.value) == "[check.ok] is not an alias"
 
     def _fake_run_one(cfg_arg, check, *, extra=None):  # type: ignore[no-untyped-def]
         run_dir = create_run_dir(cfg_arg.runs_dir, check.name)
