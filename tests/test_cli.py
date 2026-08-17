@@ -265,13 +265,81 @@ def test_list_corrupt_digest(tmp_path: Path, capsys: Any) -> None:
 
 
 def test_init_writes_and_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    target = tmp_path / CONFIG_NAME
     assert cli.main(["init"]) == 0
-    written = (tmp_path / CONFIG_NAME).read_text(encoding="utf-8")
+    written = target.read_text(encoding="utf-8")
     assert written == STARTER_CONFIG
+    # `init` must name the file it wrote — that path is the whole answer to
+    # "where will `run` look?".
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        f"wrote {target.resolve()}",
+        "reminder: add `.agent-runs/` to .gitignore",
+    ]
     assert cli.main(["init"]) == 2
+    assert capsys.readouterr().err.strip() == (
+        f"ckdn: {target.resolve()} already exists; refusing to overwrite"
+    )
+
+
+def _two_dirs(tmp_path: Path) -> tuple[Path, Path]:
+    """``(project, elsewhere)`` — the config's home and the shell's cwd."""
+    project = tmp_path / "project"
+    elsewhere = tmp_path / "elsewhere"
+    project.mkdir()
+    elsewhere.mkdir()
+    return project, elsewhere
+
+
+def test_init_honours_ckdn_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`CKDN_CWD=/project ckdn init` from elsewhere must write /project.
+
+    Writing beside the process cwd made `ckdn run` report
+    `config not found: <CKDN_CWD>/ckdn.toml (run \\`ckdn init\\` …)` forever.
+    """
+    project, elsewhere = _two_dirs(tmp_path)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("CKDN_CWD", str(project))
+    assert cli.main(["init"]) == 0
+    assert (project / CONFIG_NAME).read_text(encoding="utf-8") == STARTER_CONFIG
+    assert not (elsewhere / CONFIG_NAME).exists()
+    # …and the config `run` would look for is the one `init` just wrote.
+    assert load_config().config_path == (project / CONFIG_NAME).resolve()
+
+
+def test_init_cwd_flag_beats_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, elsewhere = _two_dirs(tmp_path)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("CKDN_CWD", str(elsewhere))
+    assert cli.main(["init", "--cwd", str(project)]) == 0
+    assert (project / CONFIG_NAME).exists()
+    assert not (elsewhere / CONFIG_NAME).exists()
+
+
+def test_init_config_flag_beats_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, elsewhere = _two_dirs(tmp_path)
+    monkeypatch.chdir(elsewhere)
+    explicit = project / "custom.toml"
+    assert cli.main(["init", "--config", str(explicit), "--cwd", str(elsewhere)]) == 0
+    assert explicit.read_text(encoding="utf-8") == STARTER_CONFIG
+    assert not (elsewhere / CONFIG_NAME).exists()
+    assert not (project / CONFIG_NAME).exists()
+
+
+def test_init_refuses_missing_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "nope"
+    assert cli.main(["init", "--cwd", str(missing)]) == 2
+    assert "no such directory" in capsys.readouterr().err
 
 
 def test_main_config_error(tmp_path: Path) -> None:

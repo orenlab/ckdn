@@ -15,6 +15,7 @@ from ckdn import baseline
 from ckdn.app.errors import (
     AliasExtraArgsError,
     AppError,
+    FailFastNotApplicableError,
     NotAliasError,
     NotAtomicError,
     UnknownCheckError,
@@ -361,15 +362,21 @@ def _alias_aggregate_exit(results: list[AtomicRunResult]) -> int:
     return 0
 
 
-def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
-    """Run an alias's members in order; return aggregate + member results."""
+def run_alias(
+    cfg: Config, alias: CheckConfig, *, fail_fast: bool | None = None
+) -> AliasRunResult:
+    """Run an alias's members in order; return aggregate + member results.
+
+    ``fail_fast`` overrides the alias's configured value when it is a bool;
+    ``None`` (the default) leaves ``ckdn.toml`` in charge.
+    """
     if not alias.is_alias or alias.members is None:
         raise NotAliasError(f"[check.{alias.name}] is not an alias")
 
     results = _run_sequence(
         cfg,
         (cfg.checks[name] for name in alias.members),
-        fail_fast=alias.fail_fast,
+        fail_fast=alias.fail_fast if fail_fast is None else fail_fast,
     )
 
     exit_code = _alias_aggregate_exit(results)
@@ -430,8 +437,15 @@ def run_check(
     name: str,
     *,
     extra: list[str] | None = None,
+    fail_fast: bool | None = None,
 ) -> AtomicRunResult | AliasRunResult:
-    """Dispatch by check kind. Aliases reject ``extra``."""
+    """Dispatch by check kind.
+
+    Aliases reject ``extra``; atomic checks reject ``fail_fast``. An atomic
+    check is one command, so there is no sequence for ``fail_fast`` to
+    control — accepting it silently is how an explicit request came to mean
+    nothing at all.
+    """
     check = cfg.checks.get(name)
     if check is None:
         raise UnknownCheckError(
@@ -445,5 +459,11 @@ def run_check(
                 "run an atomic member check instead "
                 f"(members: {', '.join(check.members or ())})"
             )
-        return run_alias(cfg, check)
+        return run_alias(cfg, check, fail_fast=fail_fast)
+    if fail_fast is not None:
+        raise FailFastNotApplicableError(
+            f"'{check.name}' is a single check, so there is no sequence to "
+            "stop early; fail_fast applies to an alias or to a run of every "
+            "check"
+        )
     return run_one(cfg, check, extra=extra_args)
