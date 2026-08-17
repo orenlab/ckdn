@@ -23,14 +23,18 @@ icon: lucide/compass
 
 ## Development
 
+The same steps CI's Linux `test` job runs, in the same order:
+
 ```bash
 uv sync --extra dev --extra mcp
-uv run pytest -q --cov=src --cov-report=term-missing
 uv run ruff check src tests
-uv run mypy src
+uv run mypy src/ckdn
+uv run ty check src/ckdn
+uv run ckdn verify-config --locked
+uv run pytest -q --cov=src --cov-report=term-missing
 ```
 
-Entry point: `ckdn` → `ckdn.cli:main`.
+Entry points: `ckdn` → `ckdn.cli:main`, `ckdn-mcp` → `ckdn.mcp.server:main`.
 
 Contract tests pin the status-model invariants; parser tests pin fact
 extraction and loud-failure guards; schema tests validate every emitted

@@ -11,8 +11,10 @@ results — `pass` is the only green state.
 
 - Never run pytest, ruff, ty, pre-commit, or other configured tools
   directly when a ckdn check exists for them.
-- Never read `full.log` whole; use digest `findings`, `log_tail`, and
-  bounded `get_evidence` / `ckdn show --evidence`.
+- Never read `full.log` whole; use the digest's `findings` and `log_tail`
+  (`ckdn show [run-id]` on the CLI, `get_digest` over MCP). Bounded
+  artifact line slices are MCP `get_evidence` only — the CLI has no
+  `--evidence` flag.
 - Never edit `.agent-runs/` or weaken `ckdn.toml` to go green.
 
 **Working directory:** subprocesses and `.agent-runs/` anchor on cwd, not
