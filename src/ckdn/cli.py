@@ -180,6 +180,12 @@ def cmd_gc(args: argparse.Namespace) -> int:
 def cmd_lock_config(args: argparse.Namespace) -> int:
     cfg = _load(args)
     target = Path(args.output) if args.output else cfg.config_path.parent / LOCK_NAME
+    # Same refusal as `init`: a missing parent is a typo, not a check result.
+    # ckdn only ever creates directories it owns (runs_dir), never one behind a
+    # user-supplied output path, and exit 2 keeps "could not start" distinct
+    # from "this check is red".
+    if not target.parent.is_dir():
+        return _fail(f"no such directory: {target.parent}")
     written = write_config_lock(cfg, target)
     print(f"wrote {written}")
     return 0
