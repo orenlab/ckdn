@@ -20,6 +20,7 @@ from ckdn.parsers.reformat_text import ReformatTextParser
 from ckdn.parsers.ruff_json import RuffJsonParser
 from ckdn.parsers.sarif import SarifParser
 from ckdn.parsers.ty_text import TyTextParser
+from ckdn.reconcile import reconcile
 
 JUNIT_ONE_FAILURE = """\
 <?xml version="1.0" encoding="utf-8"?>
@@ -1085,6 +1086,241 @@ def test_pylint_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:
 def test_pylint_missing_report_flips_parser_ok(tmp_path: Path) -> None:
     result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
     assert result.parser_ok is False
+
+
+# Captured verbatim from `uvx pylint clean.py --enable=useless-suppression
+# --output-format=json2` (pylint 4.0.7), on a module whose only remark is a
+# needless `# pylint: disable=invalid-name`. That run exits 0: pylint's rc is
+# a bitmask over F/E/W/R/C (1/2/4/8/16) and the informational class has no
+# bit. `absolutePath` is dropped because it is machine-specific.
+PYLINT_INFO_ONLY_JSON = """\
+{
+    "messages": [
+        {
+            "type": "info",
+            "symbol": "useless-suppression",
+            "message": "Useless suppression of 'invalid-name'",
+            "messageId": "I0021",
+            "confidence": "UNDEFINED",
+            "module": "clean",
+            "obj": "",
+            "line": 6,
+            "column": 0,
+            "endLine": null,
+            "endColumn": null,
+            "path": "clean.py"
+        }
+    ],
+    "statistics": {
+        "messageTypeCount": {
+            "fatal": 0,
+            "error": 0,
+            "warning": 0,
+            "refactor": 0,
+            "convention": 0,
+            "info": 1
+        },
+        "modulesLinted": 3,
+        "score": 10.0
+    }
+}
+"""
+
+
+def test_pylint_informational_messages_are_not_findings(tmp_path: Path) -> None:
+    """An info-only pylint run exits 0; it must not manufacture findings.
+
+    A finding alongside ``rc == 0`` reconciles to ``parse_mismatch``, which
+    the user cannot fix from ckdn's side.
+    """
+    (tmp_path / "pylint.json").write_text(PYLINT_INFO_ONLY_JSON, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is True
+    assert result.findings == []
+    assert result.summary["info_count"] == 1
+    assert result.summary["message_count"] == 0
+
+
+def test_pylint_info_only_run_reconciles_to_pass(tmp_path: Path) -> None:
+    """End-to-end: rc 0 plus informational output is a pass, not a mismatch."""
+    (tmp_path / "pylint.json").write_text(PYLINT_INFO_ONLY_JSON, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0))
+    status, _reason, _tail = reconcile(0, result)
+    assert status == "pass"
+
+
+def test_pylint_info_still_counted_for_the_statistics_crosscheck(
+    tmp_path: Path,
+) -> None:
+    """Dropping info findings must not blind ``_verify_counts``.
+
+    ``statistics.messageTypeCount`` declares an ``info`` bucket, so the
+    parser has to keep counting info messages even though they never become
+    findings -- otherwise the guard trades one false ``parse_mismatch`` for
+    another.
+    """
+    lying = PYLINT_INFO_ONLY_JSON.replace('"info": 1', '"info": 5')
+    (tmp_path / "pylint.json").write_text(lying, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is False
+    assert any("messageTypeCount[info]=5" in n for n in result.notes)
+
+
+# Captured verbatim from `uvx pylint mixed.py --enable=useless-suppression
+# --output-format=json2` (pylint 4.0.7); that run exits 16 -- the convention
+# bit alone, with the info message contributing nothing.
+PYLINT_MIXED_JSON = """\
+{
+    "messages": [
+        {
+            "type": "convention",
+            "symbol": "missing-module-docstring",
+            "message": "Missing module docstring",
+            "messageId": "C0114",
+            "confidence": "HIGH",
+            "module": "mixed",
+            "obj": "",
+            "line": 1,
+            "column": 0,
+            "path": "mixed.py"
+        },
+        {
+            "type": "info",
+            "symbol": "useless-suppression",
+            "message": "Useless suppression of 'invalid-name'",
+            "messageId": "I0021",
+            "confidence": "UNDEFINED",
+            "module": "mixed",
+            "obj": "",
+            "line": 2,
+            "column": 0,
+            "path": "mixed.py"
+        }
+    ],
+    "statistics": {
+        "messageTypeCount": {
+            "fatal": 0,
+            "error": 0,
+            "warning": 0,
+            "refactor": 0,
+            "convention": 1,
+            "info": 1
+        },
+        "modulesLinted": 3,
+        "score": 0
+    }
+}
+"""
+
+
+def test_pylint_mixed_report_keeps_only_the_scoring_message(tmp_path: Path) -> None:
+    """Info is filtered out of findings while its neighbours survive intact."""
+    (tmp_path / "pylint.json").write_text(PYLINT_MIXED_JSON, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=16))
+    assert result.parser_ok is True
+    assert [f.id for f in result.findings] == ["C0114 mixed.py:1:0"]
+    assert result.summary["info_count"] == 1
+    assert result.summary["by_type"] == {"convention": 1, "info": 1}
+
+
+def test_pylint_info_message_does_not_truncate_the_scan(tmp_path: Path) -> None:
+    """An info message skips itself, not the rest of the list.
+
+    pylint emits messages in source order, so an informational remark can sit
+    ahead of a real one. Abandoning the loop there would silently swallow
+    every finding behind it.
+    """
+    payload = {
+        "messages": [
+            {
+                "type": "info",
+                "messageId": "I0021",
+                "symbol": "useless-suppression",
+                "message": "Useless suppression of 'invalid-name'",
+                "path": "a.py",
+                "line": 1,
+                "column": 0,
+            },
+            {
+                "type": "error",
+                "messageId": "E0602",
+                "symbol": "undefined-variable",
+                "message": "Undefined variable 'x'",
+                "path": "a.py",
+                "line": 9,
+                "column": 4,
+            },
+        ],
+        "statistics": {
+            "messageTypeCount": {"info": 1, "error": 1},
+            "score": 5.0,
+        },
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=2))
+    assert result.parser_ok is True
+    assert [f.id for f in result.findings] == ["E0602 a.py:9:4"]
+    assert result.summary["info_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "msg_type",
+    ["fatal", "error", "warning", "refactor", "convention"],
+)
+def test_pylint_scoring_classes_all_become_findings(
+    tmp_path: Path, msg_type: str
+) -> None:
+    """Every class that owns an rc bit must still produce a finding."""
+    payload = {
+        "messages": [
+            {
+                "type": msg_type,
+                "messageId": "X0001",
+                "symbol": "some-symbol",
+                "message": "boom",
+                "path": "a.py",
+                "line": 3,
+                "column": 2,
+            }
+        ],
+        "statistics": {"messageTypeCount": {msg_type: 1, "info": 0}, "score": 1.0},
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+    assert [f.id for f in result.findings] == ["X0001 a.py:3:2"]
+    assert result.summary["info_count"] == 0
+
+
+def test_pylint_info_lookalike_types_are_not_filtered(tmp_path: Path) -> None:
+    """Only the exact ``info`` class is exempt -- no prefix or substring match."""
+    payload = {
+        "messages": [
+            {
+                "type": "information",
+                "messageId": "X0002",
+                "symbol": "s",
+                "message": "m",
+                "path": "a.py",
+                "line": 1,
+                "column": 0,
+            },
+            {
+                "type": "informational",
+                "messageId": "X0003",
+                "symbol": "s",
+                "message": "m",
+                "path": "a.py",
+                "line": 2,
+                "column": 0,
+            },
+        ],
+        "statistics": {"score": 1.0},
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
+    assert len(result.findings) == 2
+    assert result.summary["info_count"] == 0
 
 
 # --- sarif ------------------------------------------------------------------
