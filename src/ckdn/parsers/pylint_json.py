@@ -6,9 +6,19 @@ Expected command shape:
 
     uv run pylint src --output-format=json2:{run_dir}/pylint.json
 
-All message types become findings (pylint's rc is a bitmask — any class can
-make it nonzero). Optional ``score_fail_under`` gate mirrors coverage's
-``fail_under``.
+pylint's rc is a bitmask over the message classes that carry weight —
+F/E/W/R/C map to bits 1/2/4/8/16 — so any of those makes it nonzero and each
+becomes a finding. The informational class (``I``: ``useless-suppression``,
+``locally-disabled``) owns no bit: a run whose only messages are
+informational exits 0. Turning those into findings would pit findings against
+``rc == 0``, which reconciles to ``parse_mismatch`` — a permanently untrusted
+check nobody can fix. So informational messages are counted in
+``summary.info_count`` and never emitted as findings, the same contract ``ty``,
+``mypy`` and ``pyright`` use for warnings. They are still tallied in
+``by_type``, because ``statistics.messageTypeCount`` declares an ``info``
+bucket that the cross-check has to keep matching.
+
+Optional ``score_fail_under`` gate mirrors coverage's ``fail_under``.
 """
 
 from __future__ import annotations
@@ -23,6 +33,10 @@ from ckdn.parsers.base import (
     load_json_artifact,
     top_counts,
 )
+
+#: pylint's json2 spelling of the informational class. It is the one class
+#: with no bit in the exit-code bitmask, so it is evidence, not failure.
+INFORMATIONAL_TYPE = "info"
 
 
 def _message_finding(msg: dict[str, Any]) -> Finding:
@@ -84,6 +98,11 @@ class PylintJsonParser:
             )
             by_type[msg_type] = by_type.get(msg_type, 0) + 1
             by_symbol[symbol] = by_symbol.get(symbol, 0) + 1
+            # Informational messages are census, not failure evidence: they
+            # cannot lift pylint's rc off 0, so a finding here would read as
+            # `parse_mismatch`. They stay in `by_type` for the cross-check.
+            if msg_type == INFORMATIONAL_TYPE:
+                continue
             findings.append(_message_finding(msg))
 
         raw_stats = data.get("statistics")
@@ -93,6 +112,7 @@ class PylintJsonParser:
             findings=findings,
             summary={
                 "message_count": len(findings),
+                "info_count": by_type.get(INFORMATIONAL_TYPE, 0),
                 "by_type": top_counts(by_type, ctx.top),
                 "by_symbol": top_counts(by_symbol, ctx.top),
                 "score": score,
