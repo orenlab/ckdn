@@ -17,6 +17,7 @@ from ckdn.app import run as app_run
 from ckdn.app.errors import AppError
 from ckdn.app.types import AtomicRunResult
 from ckdn.config import CONFIG_NAME, STARTER_CONFIG, load_config
+from ckdn.config_lock import LOCK_NAME
 from ckdn.digest import DIGEST_NAME
 from ckdn.parsers.base import Finding, ParseResult
 from ckdn.runner import RunOutcome, create_run_dir, update_latest
@@ -438,6 +439,34 @@ def test_main_verify_and_lock_config(tmp_path: Path, capsys: Any) -> None:
     assert cli.main(["verify-config", "--config", str(cfg_path)]) == 0
     assert capsys.readouterr().out.strip() == "ok"
     assert cli.main(["verify-config", "--config", str(cfg_path), "--locked"]) == 0
+
+
+def test_lock_config_honours_output_path(tmp_path: Path) -> None:
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    out_dir = tmp_path / "ci"
+    out_dir.mkdir()
+    target = out_dir / "custom.lock.toml"
+    assert cli.main(["lock-config", "--config", str(cfg_path), "-o", str(target)]) == 0
+    assert "[check.ok]" in target.read_text(encoding="utf-8")
+    assert not (tmp_path / LOCK_NAME).exists()
+
+
+def test_lock_config_refuses_missing_output_directory(
+    tmp_path: Path, capsys: Any
+) -> None:
+    """A typo'd ``-o`` directory is a refusal (exit 2), not a red check (1)."""
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    missing = tmp_path / "nope"
+    target = missing / LOCK_NAME
+    assert cli.main(["lock-config", "--config", str(cfg_path), "-o", str(target)]) == 2
+    assert f"no such directory: {missing}" in capsys.readouterr().err
+    assert not missing.exists()
 
 
 def test_run_one_rejects_alias_as_atomic(tmp_path: Path) -> None:
