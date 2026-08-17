@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from ckdn import DIGEST_SCHEMA
+from ckdn import DIGEST_SCHEMA, cli
 from ckdn.app import run as app_run
 from ckdn.app import run_alias, run_one
 from ckdn.baseline import (
@@ -51,31 +51,106 @@ def test_load_save_roundtrip(tmp_path: Path) -> None:
 
 
 def test_gate_rules() -> None:
-    assert gate("fail", True, 0)["status"] == "pass"
-    assert gate("fail", True, 3)["status"] == "fail"
+    # a nonzero exit whose findings are ALL baselined is what the gate exists
+    # for: known findings, none new -> pass.
+    assert gate("fail", True, 0, known_count=2, gate_failures=()) == {
+        "status": "pass",
+        "policy": "no_new_findings",
+    }
+    # a green run has nothing to classify and still gates pass
+    assert gate("pass", True, 0, known_count=0, gate_failures=()) == {
+        "status": "pass",
+        "policy": "no_new_findings",
+    }
+    assert gate("fail", True, 3, known_count=0, gate_failures=()) == {
+        "status": "fail",
+        "policy": "no_new_findings",
+        "reason": "3 new finding(s) not in baseline",
+    }
     # untrustworthy evidence is never accepted by baseline
-    assert gate("error", True, 0)["status"] == "unavailable"
-    assert gate("parse_mismatch", True, 0)["status"] == "unavailable"
-    assert gate("fail", False, 0)["status"] == "unavailable"
+    for status in ("error", "parse_mismatch"):
+        assert gate(status, True, 0, known_count=1, gate_failures=()) == {
+            "status": "unavailable",
+            "policy": "no_new_findings",
+            "reason": (f"execution '{status}' — evidence not trustworthy for baseline"),
+        }
+    assert gate("fail", False, 0, known_count=1, gate_failures=()) == {
+        "status": "unavailable",
+        "policy": "no_new_findings",
+        "reason": "execution 'fail' — evidence not trustworthy for baseline",
+    }
+
+
+def test_gate_never_passes_a_failure_it_cannot_account_for() -> None:
+    """A `fail` with zero classified findings is not "no new findings".
+
+    Nothing was classified, so the baseline has no evidence that the failure
+    is the accepted one — it must not hand CI a green exit.
+    """
+    unaccounted = {
+        "status": "unavailable",
+        "policy": "no_new_findings",
+        "reason": (
+            "execution 'fail' produced no findings for the baseline to classify"
+        ),
+    }
+    decision = gate("fail", True, 0, known_count=0, gate_failures=())
+    assert decision == unaccounted
+    # and the process exit stays the honest execution exit, not 0
+    assert gate_exit(decision["status"], 1) == 1
+
+
+def test_gate_never_waives_a_policy_gate_failure() -> None:
+    """`gate_failures` carry no fingerprint, so a baseline can never accept one."""
+    assert gate(
+        "fail",
+        True,
+        0,
+        known_count=3,
+        gate_failures=["line coverage 80.0% is below fail_under=95.0%"],
+    ) == {
+        "status": "fail",
+        "policy": "no_new_findings",
+        "reason": (
+            "policy gate not satisfied: line coverage 80.0% is below fail_under=95.0%"
+        ),
+    }
+    # several policy gates are reported in order, and new findings do not
+    # displace them
+    assert gate(
+        "fail",
+        True,
+        2,
+        known_count=0,
+        gate_failures=["coverage below fail_under", "score below minimum"],
+    ) == {
+        "status": "fail",
+        "policy": "no_new_findings",
+        "reason": (
+            "policy gate not satisfied: coverage below fail_under; score below minimum"
+        ),
+    }
 
 
 def test_gate_exit() -> None:
     assert gate_exit("pass", 1) == 0
     assert gate_exit("fail", 1) == 1
+    # a gate fail is exit 1 even when execution exited something else, so the
+    # `fail` branch is not just the execution exit passing through
+    assert gate_exit("fail", 4) == 1
     assert gate_exit("unavailable", 4) == 4  # honest execution exit
     assert gate_exit(None, 7) == 7
 
 
 def test_combine_gate() -> None:
+    passed = {"status": "pass", "policy": "no_new_findings"}
+    failed = {"status": "fail", "policy": "no_new_findings"}
+    unavailable = {"status": "unavailable", "policy": "no_new_findings"}
     assert combine_gate([]) is None
-    passes = combine_gate([{"gate": {"status": "pass"}}, {"gate": {"status": "pass"}}])
-    assert passes is not None and passes["status"] == "pass"
-    mixed = combine_gate([{"gate": {"status": "pass"}}, {"gate": {"status": "fail"}}])
-    assert mixed is not None and mixed["status"] == "fail"
-    worst = combine_gate(
-        [{"gate": {"status": "fail"}}, {"gate": {"status": "unavailable"}}]
-    )
-    assert worst is not None and worst["status"] == "unavailable"
+    # the whole document is pinned, `policy` included: consumers read that key
+    assert combine_gate([{"gate": passed}, {"gate": passed}]) == passed
+    assert combine_gate([{"gate": passed}, {"gate": failed}]) == failed
+    assert combine_gate([{"gate": failed}, {"gate": unavailable}]) == unavailable
 
 
 # --- integration: execution truth is preserved ----------------------------
@@ -209,3 +284,102 @@ def test_an_alias_reports_one_gate_for_all_its_members(
     assert aggregate["status"] == "fail"
     # One member still carries a new finding, so the combined gate fails.
     assert aggregate["gate"]["status"] == "fail"
+
+
+# --- a gate is only ever `pass` on evidence the baseline classified ---------
+
+
+def _gate_failure_parser() -> object:
+    """A coverage-shaped parser: a policy gate breach and zero findings."""
+
+    class _FP:
+        name = "fp"
+
+        def parse(self, ctx: object) -> ParseResult:
+            return ParseResult(
+                gate_failures=["line coverage 80.0% is below fail_under=95.0%"]
+            )
+
+    return _FP()
+
+
+def _write_config(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "ckdn.toml"
+    path.write_text(
+        '[run]\nruns_dir = ".agent-runs"\nbaseline = "b.json"\n' + body,
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_an_rc_only_failure_is_never_gated_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`parser = "generic"` produces no findings by construction.
+
+    A failed build therefore reached the gate with ``new == 0`` and was read as
+    "no new findings" — `--gate` exited 0 on a genuinely failed check.
+    """
+    path = _write_config(tmp_path, '[check.x]\ncommand = "cmd"\nparser = "generic"\n')
+    cfg = load_config(path, cwd=tmp_path)
+    _stub_execute(monkeypatch, rc=1)
+
+    result = run_one(cfg, cfg.checks["x"], extra=[])
+    digest = result.digest
+    assert digest["status"] == "fail" and digest["rc"] == 1  # execution truth
+    assert "findings" not in digest and "baseline" not in digest
+    assert digest["gate"]["status"] == "unavailable"
+    assert gate_exit(digest["gate"]["status"], result.exit_code) == 1
+    Draft202012Validator(load_schema(DIGEST_SCHEMA)).validate(digest)
+
+
+def test_a_policy_gate_failure_is_never_gated_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A coverage `fail_under` breach has no fingerprint to baseline.
+
+    The digest used to carry `gate_failures` and `gate.status == "pass"` at the
+    same time — one document contradicting itself.
+    """
+    path = _write_config(tmp_path, '[check.x]\ncommand = "cmd"\nparser = "fp"\n')
+    cfg = load_config(path, cwd=tmp_path)
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _gate_failure_parser())
+    _stub_execute(monkeypatch, rc=0)
+
+    result = run_one(cfg, cfg.checks["x"], extra=[])
+    digest = result.digest
+    assert digest["status"] == "fail"  # execution truth, unchanged
+    assert digest["gate_failures"] == ["line coverage 80.0% is below fail_under=95.0%"]
+    assert digest["gate"]["status"] == "fail"
+    assert gate_exit(digest["gate"]["status"], result.exit_code) == 1
+    Draft202012Validator(load_schema(DIGEST_SCHEMA)).validate(digest)
+
+
+def test_gate_flag_does_not_exit_zero_on_an_unaccounted_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user-visible symptom: `ckdn run --gate` exited 0 on a red build."""
+    path = _write_config(tmp_path, '[check.x]\ncommand = "cmd"\nparser = "generic"\n')
+    _stub_execute(monkeypatch, rc=1)
+    argv = ["run", "x", "--config", str(path), "--cwd", str(tmp_path), "--quiet"]
+    assert cli.main([*argv, "--gate"]) == 1
+    assert cli.main(argv) == 1  # execution exit, unchanged
+
+
+def test_an_alias_does_not_gate_pass_on_an_unaccounted_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The aggregate gate inherits the member decisions, so it cannot launder one."""
+    path = _write_config(
+        tmp_path,
+        '[check.x]\ncommand = "cmd"\nparser = "generic"\n'
+        '[check.y]\ncommand = "cmd"\nparser = "generic"\n'
+        '[check.both]\nmembers = ["x", "y"]\nfail_fast = false\n',
+    )
+    cfg = load_config(path, cwd=tmp_path)
+    _stub_execute(monkeypatch, rc=1)
+
+    result = run_alias(cfg, cfg.checks["both"])
+    assert result.aggregate["status"] == "fail"
+    assert result.aggregate["gate"]["status"] == "unavailable"
+    assert gate_exit(result.aggregate["gate"]["status"], result.exit_code) == 1
