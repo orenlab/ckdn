@@ -84,7 +84,13 @@ def _annotate_baseline(
             shown["baselined"] = True
     if known or new:
         digest["baseline"] = {"known": known, "new": new}
-    digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
+    digest["gate"] = baseline.gate(
+        execution_status,
+        result.parser_ok,
+        new,
+        known_count=known,
+        gate_failures=result.gate_failures,
+    )
 
 
 @contextlib.contextmanager

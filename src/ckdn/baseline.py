@@ -6,9 +6,11 @@ Baseline **never changes execution truth**. A nonzero tool result stays
 ``fail`` in the digest. Baseline classifies recognized findings as *known* or
 *new* against a stored set of accepted fingerprints, and derives a separate
 ``gate`` decision. The gate may accept a nonzero exit for CI **only** when the
-evidence is trustworthy: the parser understood the output and there are no new
-findings. Anything else — ``error``, ``parse_mismatch``, a crash — is
-``unavailable``; baseline never masks an unknown failure.
+evidence is trustworthy: the parser understood the output, the failure is
+findings-shaped, and every one of those findings is already accepted. Anything
+else — ``error``, ``parse_mismatch``, a crash, a failure with no findings to
+classify, a policy gate breach — is never ``pass``; baseline never masks an
+unknown failure.
 
 Three independent axes, reported separately: execution (the digest ``status``),
 findings (``baseline.known`` / ``baseline.new``), and the ``gate``.
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -82,8 +85,21 @@ def fingerprints_for(check: str, findings: list[dict[str, Any]]) -> set[str]:
     return {fingerprint(check, finding) for finding in findings}
 
 
-def gate(execution_status: str, parser_ok: bool, new_count: int) -> dict[str, Any]:
-    """Derive the gate decision (see module docstring for the trust rules)."""
+def gate(
+    execution_status: str,
+    parser_ok: bool,
+    new_count: int,
+    *,
+    known_count: int,
+    gate_failures: Sequence[str],
+) -> dict[str, Any]:
+    """Derive the gate decision (see module docstring for the trust rules).
+
+    ``new_count == 0`` alone is not "no new findings": a failure that produced
+    no findings at all — an rc-only check, a coverage ``fail_under`` breach —
+    has nothing for the baseline to classify, so ``known_count`` and
+    ``gate_failures`` are required to tell the two apart.
+    """
     if not parser_ok or execution_status in ("error", "parse_mismatch"):
         return {
             "status": "unavailable",
@@ -93,13 +109,30 @@ def gate(execution_status: str, parser_ok: bool, new_count: int) -> dict[str, An
                 "baseline"
             ),
         }
-    if new_count == 0:
-        return {"status": "pass", "policy": "no_new_findings"}
-    return {
-        "status": "fail",
-        "policy": "no_new_findings",
-        "reason": f"{new_count} new finding(s) not in baseline",
-    }
+    if gate_failures:
+        # A policy gate (coverage fail_under, pylint score) has no finding and
+        # therefore no fingerprint: no baseline can ever accept it.
+        return {
+            "status": "fail",
+            "policy": "no_new_findings",
+            "reason": "policy gate not satisfied: " + "; ".join(gate_failures),
+        }
+    if new_count > 0:
+        return {
+            "status": "fail",
+            "policy": "no_new_findings",
+            "reason": f"{new_count} new finding(s) not in baseline",
+        }
+    if execution_status != "pass" and known_count == 0:
+        return {
+            "status": "unavailable",
+            "policy": "no_new_findings",
+            "reason": (
+                f"execution '{execution_status}' produced no findings for the "
+                "baseline to classify"
+            ),
+        }
+    return {"status": "pass", "policy": "no_new_findings"}
 
 
 def gate_exit(gate_status: str | None, execution_exit: int) -> int:
