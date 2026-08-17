@@ -11,68 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.2] - 2026-08-17
 
-Correctness release. Ten defects found by a full audit of the documentation
-against the implementation: gates that could report green on a red run, two
-parsers that could mark a check permanently untrusted, a flag that was silently
-discarded, and an MCP contract the server did not honour. Digest schemas are
-unchanged.
+Correctness release: ten defects found by auditing the documentation against
+the implementation. Digest schemas and the CLI surface are unchanged.
 
 ### Fixed
 
-- `--gate` no longer exits `0` on a failure the baseline cannot account for.
-  `gate()` treated "no *new* findings" as "nothing wrong", so a run that failed
-  with no classified findings gated `pass`: an rc-only (`generic`) check that
-  simply exited nonzero, and a coverage `fail_under` breach, which is reported
-  through `gate_failures` and produces no finding at all. A policy-gate breach
-  now gates `fail`, and a non-`pass` execution with nothing for the baseline to
-  classify gates `unavailable`, so CI falls back to the honest execution exit.
-  Execution truth (the digest `status`) is still never touched
-- A mistyped scalar in `ckdn.toml` now fails as a `ConfigError` (`ckdn: …`,
-  exit `2`) instead of escaping as a raw `ValueError` traceback. Affected
-  `[check].timeout` and the four `[run]` integers (`keep`, `top`,
-  `max_snippet_lines`, `log_tail_lines`)
-- An alias `fail_fast` must be a real TOML boolean. `fail_fast = "false"` was
-  coerced to `true`, silently skipping members the config asked to run
-- The MCP server advertised the working-directory precedence as
-  `cwd → CKDN_CWD → --cwd`, while `ServerContext.resolve_cwd` resolves
-  `cwd → --cwd → CKDN_CWD`. The strings ship to every client as the server
-  `instructions` and inside all six tool descriptions, so an agent reasoning
-  from them could run checks against the wrong tree. The advertised order is
-  now pinned to the resolver's observed behaviour by a test, not by a copy of
-  the claim
-- `bandit` runs using the `--severity-level` / `--confidence-level` flags this
-  parser recommends no longer report `parse_mismatch` forever. bandit filters
-  `results` but not `metrics`, so the metrics cross-check counted issues the
-  report deliberately omitted. It now counts only the ranks `results` actually
-  shows, and abstains where marginals cannot reconstruct the joint count —
-  the guard still fires when a parse genuinely loses findings
-- `pylint` informational messages (`useless-suppression`, `locally-disabled`)
-  are no longer findings. That class owns no bit in pylint's exit-code bitmask,
-  so a run with only informational messages exits `0` while ckdn extracted
-  findings — reported as `parse_mismatch` with no way for the user to fix it.
-  They are counted in `summary.info_count`, the contract `ty`, `mypy` and
-  `pyright` already use for warnings
-- `ckdn baseline` no longer leaves an unbounded `digest.json` as the run's
-  `latest`. It ran the check with the digest's top-N cap effectively disabled
-  so the baseline could record every finding; the complete fingerprint set now
-  travels beside a normally bounded digest instead. A 40 000-finding run wrote
-  12.6 MB before and 6.5 kB after, with all 40 000 fingerprints still recorded
-- `ckdn init` honours `--config`, `--cwd` and `CKDN_CWD` like every other
-  command. It always wrote to the process directory, so under the documented
-  `CKDN_CWD` setup it created a config `ckdn run` would never look at — and
-  then advised running `ckdn init`
-- `--fail-fast` reaches a named alias. It was read only on the `--all` path, so
-  for an alias the flag was accepted and discarded. It now overrides the
-  alias's configured `fail_fast`, and is refused with exit `2` on an atomic
-  check, where there is no sequence to stop
-- `meta.json` appears in a digest's `artifacts` again. The run directory was
-  listed before the provenance document was written, so the file `digests.md`
-  tells consumers to read was not discoverable from the digest that indexes it
+- `--gate` exited `0` on a failure with no findings to classify — an rc-only
+  (`generic`) check, or a coverage `fail_under` breach. A policy-gate breach
+  now gates `fail`, an unaccounted failure `unavailable`
+- Mistyped scalars in `ckdn.toml` raised a `ValueError` traceback instead of a
+  `ConfigError`: `[check].timeout` and the four `[run]` integers
+- `fail_fast = "false"` coerced to `true`, silently skipping alias members. It
+  must now be a real TOML boolean
+- The MCP server advertised `cwd → CKDN_CWD → --cwd` while resolving
+  `cwd → --cwd → CKDN_CWD`, so an agent could run checks against the wrong
+  tree. A test now pins the text to the resolver's observed order
+- `bandit` with `--severity-level` / `--confidence-level` reported
+  `parse_mismatch` forever: those flags filter `results` but not `metrics`, and
+  the cross-check counted the difference. It now counts only the ranks
+  `results` shows, and abstains when nothing is inferable
+- `pylint` informational messages became findings although that class carries
+  no exit-code bit, so an info-only run reported `parse_mismatch`. They are now
+  counted in `summary.info_count`
+- `ckdn baseline` left an unbounded `digest.json` as `latest`; fingerprints now
+  travel beside a normally bounded digest (40 000 findings: 12.6 MB → 6.5 kB)
+- `ckdn init` ignored `--config` / `--cwd` / `CKDN_CWD` and wrote a config that
+  `ckdn run` would never look at
+- `--fail-fast` was discarded for a named alias. It now overrides the alias's
+  configured value, and is refused (exit `2`) on an atomic check
+- `meta.json` was missing from every digest's `artifacts`: the run directory
+  was listed before that file was written
 
 ### Changed
 
-- The four `[run]` integer settings reject a float instead of truncating it:
-  `keep = 2.5` was silently read as `2`
+- The four `[run]` integers reject a float instead of truncating it
 - Dev and optional dependency floors raised: `fastmcp>=3.4.7`, `mypy>=2.3.1`,
   `ruff>=0.16.3`, `ty>=0.0.72`, `pre-commit>=4.6.2`
 
