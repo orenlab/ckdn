@@ -133,6 +133,35 @@ def test_main_unknown_parser(tmp_path: Path) -> None:
     assert cli.main(["run", "--config", str(cfg), "bad"]) == 2
 
 
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            '[check.a]\ncommand = "true"\nparser = "generic"\ntimeout = "60s"\n',
+            "ckdn: [check.a] timeout must be a number",
+        ),
+        (
+            '[run]\nkeep = "twenty"\n\n'
+            '[check.a]\ncommand = "true"\nparser = "generic"\n',
+            "ckdn: [run].keep must be an integer",
+        ),
+        (
+            '[check.a]\ncommand = "true"\nparser = "generic"\n'
+            '[check.g]\nmembers = ["a"]\nfail_fast = "false"\n',
+            "ckdn: [check.g] fail_fast must be a boolean",
+        ),
+    ],
+)
+def test_mistyped_scalars_exit_two_with_a_clean_message(
+    tmp_path: Path, capsys: Any, body: str, message: str
+) -> None:
+    """These used to escape ``main`` as a raw traceback (or silently coerce)."""
+    path = tmp_path / CONFIG_NAME
+    path.write_text(body, encoding="utf-8")
+    assert cli.main(["run", "--config", str(path), "a"]) == 2
+    assert capsys.readouterr().err.strip() == message
+
+
 def test_parser_crash_becomes_parse_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
