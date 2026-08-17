@@ -283,6 +283,31 @@ def _parse_command_policy(run_raw: dict[str, Any]) -> CommandPolicy:
     return cast(CommandPolicy, policy)
 
 
+def _parse_timeout(name: str, raw: Any) -> float | None:
+    """Parse an optional ``timeout``: a TOML integer or float, never a string.
+
+    ``bool`` is rejected on purpose: TOML has a real boolean type, so a bool
+    here is always a typo, and ``float(True)`` would silently mean 1 second.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        raise ConfigError(f"[check.{name}] timeout must be a number")
+    return float(raw)
+
+
+def _parse_run_int(run_raw: dict[str, Any], key: str, default: int) -> int:
+    """Read an integer ``[run]`` setting, rejecting anything that is not one.
+
+    A string, float or bool used to reach ``int()`` and escape ``load_config``
+    as a raw ``ValueError`` traceback (or, for bools, coerce silently).
+    """
+    value = run_raw.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"[run].{key} must be an integer")
+    return value
+
+
 def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
     has_command = "command" in raw
     has_parser = "parser" in raw
@@ -309,7 +334,9 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
             )
         if not all(isinstance(m, str) and m for m in members_raw):
             raise ConfigError(f"[check.{name}] members must be non-empty strings")
-        fail_fast = bool(raw.get("fail_fast", True))
+        fail_fast = raw.get("fail_fast", True)
+        if not isinstance(fail_fast, bool):
+            raise ConfigError(f"[check.{name}] fail_fast must be a boolean")
         options = {k: v for k, v in raw.items() if k not in _ALIAS_RESERVED}
         if options:
             raise ConfigError(
@@ -331,8 +358,7 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
     # No `members` guard here: a check that sets it is an alias by definition,
     # and one that sets it alongside command/parser was rejected as ambiguous
     # long before this point.
-    timeout_raw = raw.get("timeout")
-    timeout = float(timeout_raw) if timeout_raw is not None else None
+    timeout = _parse_timeout(name, raw.get("timeout"))
     env = _parse_check_env(name, raw.get("env"))
     options = {k: v for k, v in raw.items() if k not in _ATOMIC_RESERVED}
     return CheckConfig(
@@ -413,10 +439,10 @@ def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
         raise ConfigError("[run] must be a table")
     run = RunSettings(
         runs_dir=Path(str(run_raw.get("runs_dir", ".agent-runs"))),
-        keep=int(run_raw.get("keep", 20)),
-        top=int(run_raw.get("top", 20)),
-        max_snippet_lines=int(run_raw.get("max_snippet_lines", 12)),
-        log_tail_lines=int(run_raw.get("log_tail_lines", 40)),
+        keep=_parse_run_int(run_raw, "keep", 20),
+        top=_parse_run_int(run_raw, "top", 20),
+        max_snippet_lines=_parse_run_int(run_raw, "max_snippet_lines", 12),
+        log_tail_lines=_parse_run_int(run_raw, "log_tail_lines", 40),
         command_policy=_parse_command_policy(run_raw),
         command_allowlist=_parse_command_allowlist(run_raw),
         baseline=(Path(str(run_raw["baseline"])) if run_raw.get("baseline") else None),
