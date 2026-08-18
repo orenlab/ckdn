@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.2] - 2026-08-18
 
-Correctness release: twelve defects found by auditing the documentation against
+Correctness release: fifteen defects found by auditing the documentation against
 the implementation. Digest schemas are unchanged.
 
 ### Fixed
@@ -50,6 +50,14 @@ the implementation. Digest schemas are unchanged.
   exist raised `FileNotFoundError` and exited `1` — the code that means "this
   check is red". Both now refuse with `no such directory: …` and exit `2`,
   before anything runs
+- `lock-config -o` naming an existing **directory** raised `IsADirectoryError`
+  and exited `1`; it now refuses with `not a file: …` and exit `2`
+- A `timeout` that is zero or negative loaded fine and then killed every run
+  instantly with `rc 124`; it is now a `ConfigError` at load time
+- `bandit`: a report whose `results` entries could not be read was treated as
+  tool-side filtering and passed. Filtering cuts ranks, it never makes a report
+  unreadable, so a declared total that does not match what was parsed is
+  refused again
 
 ### Changed
 
