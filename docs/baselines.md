@@ -148,10 +148,13 @@ rather than quietly accepting everything.
 
 Within a file that is valid JSON, entries ckdn cannot use are skipped in
 silence: a check whose value is not a list of fingerprints simply loses its
-baseline, and all of that check's findings come back `new` on the next run. A
-file that is not valid JSON at all is not handled — the run aborts once the
-check has already finished, leaving a run directory with `full.log`, the
-tool's artifacts and `meta.json`, but no `digest.json`.
+baseline, and all of that check's findings come back `new` on the next run.
+That tolerance stops at the document itself. A baseline that cannot be read at
+all — unparseable JSON, or a top-level value that is not an object — is
+refused **before the tool starts**: `ckdn: invalid JSON in baseline …`, exit
+`2`, and nothing runs. Reading it first is deliberate: discovering the problem
+after the check had finished used to abandon a run directory with no
+`digest.json`, which `prune` then kept forever.
 
 ## What `ckdn baseline` will not do
 

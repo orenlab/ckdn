@@ -11,7 +11,9 @@ CommandPolicy = Literal["workspace", "allowlist", "off"]
 
 COMMAND_POLICIES: frozenset[str] = frozenset({"workspace", "allowlist", "off"})
 
-# Starter-compatible defaults; extend via ``[run.command_allowlist].prefixes``.
+# Starter-compatible defaults. ``[run.command_allowlist].prefixes``
+# **replaces** this set rather than extending it -- see
+# ``effective_allowlist_prefixes``.
 DEFAULT_ALLOWLIST_PREFIXES: tuple[str, ...] = (
     "uv run ",
     "uvx ",
