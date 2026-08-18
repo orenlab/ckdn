@@ -6,9 +6,11 @@ Baseline **never changes execution truth**. A nonzero tool result stays
 ``fail`` in the digest. Baseline classifies recognized findings as *known* or
 *new* against a stored set of accepted fingerprints, and derives a separate
 ``gate`` decision. The gate may accept a nonzero exit for CI **only** when the
-evidence is trustworthy: the parser understood the output and there are no new
-findings. Anything else — ``error``, ``parse_mismatch``, a crash — is
-``unavailable``; baseline never masks an unknown failure.
+evidence is trustworthy: the parser understood the output, the failure is
+findings-shaped, and every one of those findings is already accepted. Anything
+else — ``error``, ``parse_mismatch``, a crash, a failure with no findings to
+classify, a policy gate breach — is never ``pass``; baseline never masks an
+unknown failure.
 
 Three independent axes, reported separately: execution (the digest ``status``),
 findings (``baseline.known`` / ``baseline.new``), and the ``gate``.
@@ -18,11 +20,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 #: Baseline document schema identifier.
 BASELINE_SCHEMA = "ckdn.baseline/1"
+
+
+class BaselineError(Exception):
+    """A configured baseline file is not a usable baseline document.
+
+    The storage format is this module's own business, so its failures are
+    reported in its own terms — a caller cannot be expected to handle a
+    ``json`` or ``os`` error it has no way of knowing :func:`load` can raise.
+    """
 
 
 def _path_of(location: str | None) -> str:
@@ -52,11 +64,36 @@ def fingerprint(check: str, finding: dict[str, Any]) -> str:
 
 
 def load(path: Path) -> dict[str, set[str]]:
-    """Load a baseline file into ``{check: {fingerprints}}``; empty if missing."""
+    """Load a baseline file into ``{check: {fingerprints}}``; empty if missing.
+
+    A missing file is an empty baseline — that is how the first run works.
+    Anything else that stops the document from being read is a
+    :class:`BaselineError`: unreadable bytes, JSON that does not parse, or a
+    document that is not an object. Those say the file is not a baseline at
+    all, and reading them as "no findings accepted" would mark every existing
+    finding new while never mentioning the file that was meant to say
+    otherwise.
+
+    Malformed *entries inside* a valid document remain deliberately tolerated
+    (see the loop below): one check's value being the wrong shape is not a
+    reason to stop every other check in the file.
+    """
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    checks = data.get("checks", {}) if isinstance(data, dict) else {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BaselineError(f"cannot read baseline {path}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BaselineError(f"invalid JSON in baseline {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise BaselineError(
+            f"baseline {path} is not a baseline document: expected a JSON "
+            f"object, found {type(data).__name__}"
+        )
+    checks = data.get("checks", {})
     out: dict[str, set[str]] = {}
     if isinstance(checks, dict):
         for name, fps in checks.items():
@@ -77,13 +114,21 @@ def save(path: Path, baseline: dict[str, set[str]]) -> None:
     )
 
 
-def fingerprints_for(check: str, findings: list[dict[str, Any]]) -> set[str]:
-    """Fingerprints for a list of finding dicts (``Finding.to_dict()`` shape)."""
-    return {fingerprint(check, finding) for finding in findings}
+def gate(
+    execution_status: str,
+    parser_ok: bool,
+    new_count: int,
+    *,
+    known_count: int,
+    gate_failures: Sequence[str],
+) -> dict[str, Any]:
+    """Derive the gate decision (see module docstring for the trust rules).
 
-
-def gate(execution_status: str, parser_ok: bool, new_count: int) -> dict[str, Any]:
-    """Derive the gate decision (see module docstring for the trust rules)."""
+    ``new_count == 0`` alone is not "no new findings": a failure that produced
+    no findings at all — an rc-only check, a coverage ``fail_under`` breach —
+    has nothing for the baseline to classify, so ``known_count`` and
+    ``gate_failures`` are required to tell the two apart.
+    """
     if not parser_ok or execution_status in ("error", "parse_mismatch"):
         return {
             "status": "unavailable",
@@ -93,13 +138,30 @@ def gate(execution_status: str, parser_ok: bool, new_count: int) -> dict[str, An
                 "baseline"
             ),
         }
-    if new_count == 0:
-        return {"status": "pass", "policy": "no_new_findings"}
-    return {
-        "status": "fail",
-        "policy": "no_new_findings",
-        "reason": f"{new_count} new finding(s) not in baseline",
-    }
+    if gate_failures:
+        # A policy gate (coverage fail_under, pylint score) has no finding and
+        # therefore no fingerprint: no baseline can ever accept it.
+        return {
+            "status": "fail",
+            "policy": "no_new_findings",
+            "reason": "policy gate not satisfied: " + "; ".join(gate_failures),
+        }
+    if new_count > 0:
+        return {
+            "status": "fail",
+            "policy": "no_new_findings",
+            "reason": f"{new_count} new finding(s) not in baseline",
+        }
+    if execution_status != "pass" and known_count == 0:
+        return {
+            "status": "unavailable",
+            "policy": "no_new_findings",
+            "reason": (
+                f"execution '{execution_status}' produced no findings for the "
+                "baseline to classify"
+            ),
+        }
+    return {"status": "pass", "policy": "no_new_findings"}
 
 
 def gate_exit(gate_status: str | None, execution_exit: int) -> int:

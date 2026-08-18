@@ -9,6 +9,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-08-18
+
+Correctness release: fifteen defects found by auditing the documentation against
+the implementation. Digest schemas are unchanged.
+
+### Fixed
+
+- `--gate` exited `0` on a failure with no findings to classify — an rc-only
+  (`generic`) check, or a coverage `fail_under` breach. A policy-gate breach
+  now gates `fail`, an unaccounted failure `unavailable`
+- Mistyped scalars in `ckdn.toml` raised a `ValueError` traceback instead of a
+  `ConfigError`: `[check].timeout` and the four `[run]` integers
+- `fail_fast = "false"` coerced to `true`, silently skipping alias members. It
+  must now be a real TOML boolean
+- The MCP server advertised `cwd → CKDN_CWD → --cwd` while resolving
+  `cwd → --cwd → CKDN_CWD`, so an agent could run checks against the wrong
+  tree. A test now pins the text to the resolver's observed order
+- `bandit` with `--severity-level` / `--confidence-level` reported
+  `parse_mismatch` forever: those flags filter `results` but not `metrics`, and
+  the cross-check counted the difference. It now counts only the ranks
+  `results` shows, and abstains when nothing is inferable
+- `pylint` informational messages became findings although that class carries
+  no exit-code bit, so an info-only run reported `parse_mismatch`. They are now
+  counted in `summary.info_count`
+- `ckdn baseline` left an unbounded `digest.json` as `latest`; fingerprints now
+  travel beside a normally bounded digest (40 000 findings: 12.6 MB → 6.5 kB)
+- `ckdn init` ignored `--config` / `--cwd` / `CKDN_CWD` and wrote a config that
+  `ckdn run` would never look at
+- `--fail-fast` was discarded for a named alias. It now overrides the alias's
+  configured value, and is refused (exit `2`) on an atomic check
+- `meta.json` was missing from every digest's `artifacts`: the run directory
+  was listed before that file was written
+- An unusable `[run].baseline` file — unparseable JSON, a top-level non-object,
+  or one that cannot be read — crashed with a traceback *after* the check had
+  run, leaving a run directory with no `digest.json` that `prune` then kept
+  forever. It is now read before the tool starts and refused as `ckdn: …`,
+  exit `2`. Malformed entries inside a valid document stay tolerated
+- A `[run].baseline` or `lock-config -o` path into a directory that does not
+  exist raised `FileNotFoundError` and exited `1` — the code that means "this
+  check is red". Both now refuse with `no such directory: …` and exit `2`,
+  before anything runs
+- `lock-config -o` naming an existing **directory** raised `IsADirectoryError`
+  and exited `1`; it now refuses with `not a file: …` and exit `2`
+- A `timeout` that is zero or negative loaded fine and then killed every run
+  instantly with `rc 124`; it is now a `ConfigError` at load time
+- `bandit`: a report whose `results` entries could not be read was treated as
+  tool-side filtering and passed. Filtering cuts ranks, it never makes a report
+  unreadable, so a declared total that does not match what was parsed is
+  refused again
+
+### Changed
+
+- The four `[run]` integers reject a float instead of truncating it
+- Dev and optional dependency floors raised: `fastmcp>=3.4.7`, `mypy>=2.3.1`,
+  `ruff>=0.16.3`, `ty>=0.0.72`, `pre-commit>=4.6.2`
+
 ## [1.3.1] - 2026-08-09
 
 Maintenance release. No behaviour changes: the CLI, the digest schemas and the
@@ -186,7 +242,8 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/orenlab/ckdn/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/orenlab/ckdn/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/orenlab/ckdn/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/orenlab/ckdn/compare/v1.1.1...v1.2.0

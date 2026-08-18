@@ -8,10 +8,19 @@ Expected command shape:
 
 Severity filtering is done TOOL-SIDE (``--severity-level``), never here —
 hiding findings the exit code knows about would manufacture a parse_mismatch.
+
+The metrics cross-check has to know that, though. Verified against bandit
+1.9.4: ``--severity-level`` / ``--confidence-level`` filter ``results`` but
+NOT ``metrics`` — both ``_totals`` and the per-file maps keep counting every
+issue the scan found. Summing all severity buckets and comparing that to the
+number of parsed findings therefore fires on every filtered run, which turns
+the flag this module recommends into a permanent ``parse_mismatch``. See
+:meth:`BanditJsonParser._verify_metrics` for what is actually inferable.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from ckdn.parsers.base import (
@@ -21,6 +30,72 @@ from ckdn.parsers.base import (
     load_json_artifact,
     top_counts,
 )
+
+#: bandit's severity/confidence ladder, lowest rank first (``bandit.core.RANKING``).
+_RANKS = ("UNDEFINED", "LOW", "MEDIUM", "HIGH")
+
+#: The two filterable axes: ``(metrics bucket prefix, results field)``.
+_AXES = (("SEVERITY", "issue_severity"), ("CONFIDENCE", "issue_confidence"))
+
+
+def _bucket_totals(metrics: dict[str, Any]) -> dict[str, dict[int, int]]:
+    """Aggregate the ``SEVERITY.*`` / ``CONFIDENCE.*`` buckets by rank.
+
+    Prefers the aggregate ``_totals`` table (``totals`` is accepted as an
+    alias); when neither is a table, the per-file maps are summed instead.
+    """
+    totals = metrics.get("_totals", metrics.get("totals"))
+    sources = (
+        [totals]
+        if isinstance(totals, dict)
+        else [value for value in metrics.values() if isinstance(value, dict)]
+    )
+    counts: dict[str, dict[int, int]] = {axis: {} for axis, _ in _AXES}
+    for source in sources:
+        for axis, _ in _AXES:
+            for rank, name in enumerate(_RANKS):
+                raw = source.get(f"{axis}.{name}")
+                if isinstance(raw, (int, float)):
+                    counts[axis][rank] = counts[axis].get(rank, 0) + int(raw)
+    return counts
+
+
+def _observed_floor(results: Sequence[Any], field: str) -> int | None:
+    """Lowest rank ``results`` actually shows on one axis, or ``None``.
+
+    This is the only handle the report gives on tool-side filtering: a
+    ``--severity-level``/``--confidence-level`` cut keeps a suffix of the
+    ladder, so the lowest rank still present bounds where the cut was.
+    """
+    floor: int | None = None
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get(field) or "").upper()
+        if name not in _RANKS:
+            continue
+        rank = _RANKS.index(name)
+        if floor is None or rank < floor:
+            floor = rank
+    return floor
+
+
+def _refuse(result: ParseResult, declared: int, parsed: int) -> None:
+    """Flag the parse as untrustworthy: metrics and findings contradict."""
+    result.parser_ok = False
+    result.notes.append(
+        f"bandit metrics imply {declared} issue(s) but "
+        f"{parsed} were parsed; refusing to trust this parse"
+    )
+
+
+def _skip(result: ParseResult, declared_total: int) -> None:
+    """Record that the cross-check abstained, and why."""
+    result.notes.append(
+        f"bandit metrics count {declared_total} issue(s) that `results` does "
+        "not list; tool-side --severity-level/--confidence-level filtering is "
+        "invisible in metrics, so the metrics cross-check was skipped"
+    )
 
 
 class BanditJsonParser:
@@ -89,7 +164,7 @@ class BanditJsonParser:
                 "by_test_id": top_counts(by_test_id, ctx.top),
             },
         )
-        self._verify_metrics(result, findings, metrics)
+        self._verify_metrics(result, findings, metrics, results, ctx.rc)
         return result
 
     @staticmethod
@@ -97,42 +172,67 @@ class BanditJsonParser:
         result: ParseResult,
         findings: list[Finding],
         metrics: dict[str, Any],
+        results: Sequence[Any],
+        rc: int,
     ) -> None:
-        """Cross-check findings against metrics._totals, totals, or per-file maps."""
+        """Cross-check parsed findings against the metrics tables.
+
+        The guard exists to catch a parse that silently dropped findings, and
+        it stays. What changes is what counts as "declared", because metrics
+        are never filtered while ``results`` is:
+
+        * Empty ``results`` with ``rc == 0`` -- bandit found nothing at or
+          above its configured level and said so. The parse took zero entries
+          and produced zero findings, so it cannot have lost anything; the
+          leftover metrics are the filter, not a parse fault. Abstain.
+          ``rc != 0`` means bandit did find reportable issues, so an empty
+          ``results`` is not filtering and the guard still fires.
+        * Otherwise, count only ranks at or above the floor ``results`` shows
+          on each axis. Under a severity cut that sum is exactly the surviving
+          issue count, so the guard keeps its full strength.
+        * When EVERY usable axis shows counts below its floor, all of them were
+          cut and the per-axis marginals cannot reconstruct the joint count.
+          Nothing is inferable, so abstain rather than guess.
+        """
         if not metrics:
             return
-        # Prefer aggregate totals; otherwise sum per-file severity maps.
-        totals = metrics.get("_totals", metrics.get("totals"))
-        if isinstance(totals, dict):
-            declared = 0
-            for key, raw in totals.items():
-                key_s = str(key).upper()
-                if "SEVERITY" in key_s and isinstance(raw, (int, float)):
-                    declared += int(raw)
-            if declared and declared != len(findings):
-                result.parser_ok = False
-                result.notes.append(
-                    f"bandit metrics imply {declared} issue(s) but "
-                    f"{len(findings)} were parsed; refusing to trust this parse"
-                )
+        counts = _bucket_totals(metrics)
+        declared_total = sum(counts["SEVERITY"].values())
+        if not declared_total:
             return
-        # Per-file metrics: sum HIGH/MEDIUM/LOW/UNDEFINED across files.
-        declared = 0
-        for value in metrics.values():
-            if not isinstance(value, dict):
+
+        if not results:
+            if rc == 0:
+                _skip(result, declared_total)
+                return
+            _refuse(result, declared_total, len(findings))
+            return
+
+        bounds: list[int] = []
+        uncut = False
+        for axis, field in _AXES:
+            floor = _observed_floor(results, field)
+            if floor is None or not counts[axis]:
                 continue
-            for key in (
-                "SEVERITY.HIGH",
-                "SEVERITY.MEDIUM",
-                "SEVERITY.LOW",
-                "SEVERITY.UNDEFINED",
-            ):
-                raw = value.get(key)
-                if isinstance(raw, (int, float)):
-                    declared += int(raw)
-        if declared and declared != len(findings):
-            result.parser_ok = False
-            result.notes.append(
-                f"bandit metrics imply {declared} issue(s) but "
-                f"{len(findings)} were parsed; refusing to trust this parse"
-            )
+            below = sum(n for rank, n in counts[axis].items() if rank < floor)
+            bounds.append(sum(counts[axis].values()) - below)
+            if not below:
+                uncut = True
+        if not bounds:
+            # No axis yielded a floor, so nothing justifies discounting any
+            # bucket: the declared total has to match what was parsed. Being
+            # unable to infer a *discount* is not the same as being unable to
+            # *compare* -- filtering cuts ranks, it never makes a report
+            # unreadable, so a gap here is the lost parse the guard exists for.
+            if declared_total != len(findings):
+                _refuse(result, declared_total, len(findings))
+            return
+        # Every usable axis was cut: the marginals cannot reconstruct the joint
+        # count, so nothing is inferable.
+        if not uncut:
+            _skip(result, declared_total)
+            return
+
+        declared = min(bounds)
+        if declared != len(findings):
+            _refuse(result, declared, len(findings))

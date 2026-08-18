@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import dataclasses
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -33,6 +32,7 @@ from ckdn.app import (
     get_digest,
     list_checks,
     list_runs,
+    load_baseline,
     run_all,
     run_check,
 )
@@ -44,6 +44,7 @@ from ckdn.config import (
     Config,
     ConfigError,
     load_config,
+    resolve_config_path,
 )
 from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
 from ckdn.digest import dump_json, dump_json_pretty
@@ -51,20 +52,22 @@ from ckdn.preflight import diagnose
 from ckdn.runner import RC_INTERRUPTED, prune
 from ckdn.schema import load_schema, schema_ids
 
-#: ``top`` for a baseline run. The baseline records every finding a check
-#: produced, so the digest's top-N slice must not truncate it; no real tool
-#: reports a billion findings, and a plain cap keeps the digest shape unchanged.
-BASELINE_TOP = 1_000_000_000
-
 
 def _fail(message: str) -> int:
     print(f"ckdn: {message}", file=sys.stderr)
     return 2
 
 
+def _config_arg(args: argparse.Namespace) -> Path | None:
+    return Path(args.config) if args.config else None
+
+
+def _cwd_arg(args: argparse.Namespace) -> Path | None:
+    return Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
+
+
 def _load(args: argparse.Namespace) -> Config:
-    cwd = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
-    return load_config(Path(args.config) if args.config else None, cwd=cwd)
+    return load_config(_config_arg(args), cwd=_cwd_arg(args))
 
 
 def run_one(
@@ -112,7 +115,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.check is None:
         return _fail("specify a check name, or --all to run every atomic check")
     try:
-        outcome = run_check(cfg, args.check, extra=list(args.extra))
+        outcome = run_check(
+            cfg,
+            args.check,
+            extra=list(args.extra),
+            # ``store_true`` cannot tell "absent" from "explicitly false" and
+            # there is no ``--no-fail-fast``, so only the flag's *presence*
+            # overrides the alias's configured ``fail_fast``.
+            fail_fast=True if args.fail_fast else None,
+        )
     except AppError as exc:
         return _fail(str(exc))
     if isinstance(outcome, AliasRunResult):
@@ -170,6 +181,14 @@ def cmd_gc(args: argparse.Namespace) -> int:
 def cmd_lock_config(args: argparse.Namespace) -> int:
     cfg = _load(args)
     target = Path(args.output) if args.output else cfg.config_path.parent / LOCK_NAME
+    # Same refusal as `init`: a missing parent is a typo, not a check result.
+    # ckdn only ever creates directories it owns (runs_dir), never one behind a
+    # user-supplied output path, and exit 2 keeps "could not start" distinct
+    # from "this check is red".
+    if not target.parent.is_dir():
+        return _fail(f"no such directory: {target.parent}")
+    if target.is_dir():
+        return _fail(f"not a file: {target}")
     written = write_config_lock(cfg, target)
     print(f"wrote {written}")
     return 0
@@ -197,6 +216,11 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     baseline_path = cfg.baseline_path
     if baseline_path is None:
         return _fail('set `baseline = "…"` under [run] in ckdn.toml first')
+    # Same refusal as `init` and `lock-config`, and made here so it lands
+    # before any target runs: `baseline.save` writes with a bare `write_text`,
+    # so a typo used to surface as a traceback once every check had executed.
+    if not baseline_path.parent.is_dir():
+        return _fail(f"no such directory: {baseline_path.parent}")
     check = cfg.checks.get(args.check)
     if check is None:
         return _fail(
@@ -205,13 +229,12 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     targets = (
         [cfg.checks[m] for m in (check.members or ())] if check.is_alias else [check]
     )
-    current = baseline.load(baseline_path)
+    # Before the first target runs: an unusable baseline is refused while
+    # nothing has been spent, and the file this command exists to update is
+    # never rewritten from a document it could not read in the first place.
+    current = load_baseline(baseline_path)
     for target in targets:
-        # Record every finding, not just the digest's top-N slice.
-        uncapped = dataclasses.replace(
-            target, options={**target.options, "top": BASELINE_TOP}
-        )
-        result = app_run_one(cfg, uncapped, extra=[])
+        result = app_run_one(cfg, target, extra=[])
         if result.digest.get("interrupted"):
             return _fail(
                 f"'{target.name}' was interrupted; its findings are partial and "
@@ -226,9 +249,10 @@ def cmd_baseline(args: argparse.Namespace) -> int:
                 f"'{target.name}' finished {result.status} — its findings are "
                 f"not trustworthy enough to accept. {baseline_path} is unchanged"
             )
-        fingerprints = baseline.fingerprints_for(
-            target.name, result.digest.get("findings", [])
-        )
+        # Every finding of the run, not the digest's top-N slice: the run
+        # itself stays a normal, bounded run, and the complete set travels
+        # beside its digest.
+        fingerprints = set(result.fingerprints)
         current[target.name] = fingerprints
         print(f"recorded {len(fingerprints)} finding(s) for {target.name}")
     baseline.save(baseline_path, current)
@@ -292,9 +316,16 @@ def cmd_schema(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    target = Path.cwd() / CONFIG_NAME
+    """Write a starter config where every other command will look for it.
+
+    Resolution is :func:`ckdn.config.resolve_config_path`, the same function
+    :func:`load_config` uses, so ``init`` and ``run`` cannot disagree.
+    """
+    target = resolve_config_path(_config_arg(args), cwd=_cwd_arg(args))
     if target.exists():
         return _fail(f"{target} already exists; refusing to overwrite")
+    if not target.parent.is_dir():
+        return _fail(f"no such directory: {target.parent}")
     target.write_text(STARTER_CONFIG, encoding="utf-8")
     print(f"wrote {target}")
     print("reminder: add `.agent-runs/` to .gitignore")
@@ -331,7 +362,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--fail-fast",
         action="store_true",
-        help="with --all, stop at the first non-green check",
+        help="stop at the first non-green check: with --all, or overriding "
+        "an alias's fail_fast (rejected for a single atomic check)",
     )
     p_run.add_argument(
         "--gate",
@@ -373,6 +405,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_gc.set_defaults(fn=cmd_gc)
 
     p_init = sub.add_parser("init", help="write a starter ckdn.toml")
+    # The same --config/--cwd every config-*reading* command takes: init must
+    # write where those commands will later look, not beside the process cwd.
+    add_config(p_init)
     p_init.set_defaults(fn=cmd_init)
 
     p_baseline = sub.add_parser(

@@ -238,6 +238,11 @@ def test_server_context_env_and_load_error(
     assert bare.resolve_config_path() is None
     monkeypatch.setenv("CKDN_CONFIG", str(cfg_path))
     assert bare.resolve_config_path() == Path(cfg_path)
+    # `ckdn-mcp --config` outranks CKDN_CONFIG, mirroring the cwd precedence
+    # below; without both set at once the two are indistinguishable.
+    monkeypatch.setenv("CKDN_CONFIG", str(tmp_path / "from-env.toml"))
+    assert ctx.resolve_config_path() == cfg_path
+    monkeypatch.setenv("CKDN_CONFIG", str(cfg_path))
 
     with pytest.raises(ConfigLoadError):
         ServerContext().load(str(tmp_path / "missing.toml"))

@@ -5,18 +5,22 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from ckdn.app import (
     MAX_EVIDENCE_LIMIT,
     AliasExtraArgsError,
+    AliasRunResult,
     ArtifactError,
     DigestError,
+    FailFastNotApplicableError,
     NotAliasError,
     NotAtomicError,
     RunNotFoundError,
@@ -33,7 +37,7 @@ from ckdn.app import (
 from ckdn.app import run as app_run
 from ckdn.app.errors import AppError
 from ckdn.config import Config, load_config
-from ckdn.digest import DIGEST_NAME, META_NAME
+from ckdn.digest import DIGEST_NAME, META_NAME, build_digest
 from ckdn.runner import (
     LOG_NAME,
     RunLockError,
@@ -74,6 +78,38 @@ def _portable_execute(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> RunOutcome:
         (run_dir / LOG_NAME).write_text("", encoding="utf-8")
         rc = 1 if tokens and tokens[0] == "false" else 0
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=rc,
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _fake)
+
+
+def _stub_execute_writing(
+    monkeypatch: pytest.MonkeyPatch, artifact: str, *, rc: int
+) -> None:
+    """An ``execute`` that leaves a tool-written artifact beside the log.
+
+    Real checks drop reports into ``{run_dir}``; the default stub does not, so
+    a test about the artifact index needs one that does.
+    """
+
+    def _fake(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        (run_dir / artifact).write_text("boom\n", encoding="utf-8")
         return RunOutcome(
             run_dir=run_dir,
             tokens=tokens,
@@ -296,14 +332,100 @@ def test_run_check_unknown_and_alias_extra(tmp_path: Path) -> None:
     cfg = _load_cfg(
         tmp_path,
         '[check.ok]\ncommand = "true"\nparser = "generic"\n'
-        '[check.g]\nmembers = ["ok"]\n',
+        '[check.two]\ncommand = "true"\nparser = "generic"\n'
+        '[check.g]\nmembers = ["ok", "two"]\n',
     )
-    with pytest.raises(UnknownCheckError):
+    with pytest.raises(UnknownCheckError) as unknown:
         run_check(cfg, "nope")
+    assert str(unknown.value) == "unknown check 'nope'; configured: g, ok, two"
     with pytest.raises(NotAtomicError):
         run_one(cfg, cfg.checks["g"], extra=[])
-    with pytest.raises(AliasExtraArgsError):
+    with pytest.raises(AliasExtraArgsError) as extra:
         run_check(cfg, "g", extra=["-x"])
+    assert str(extra.value) == (
+        "alias 'g' does not accept extra arguments; run an atomic member "
+        "check instead (members: ok, two)"
+    )
+
+
+def _stub_first_member_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _exec(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        (run_dir / LOG_NAME).write_text("", encoding="utf-8")
+        return RunOutcome(
+            run_dir=run_dir,
+            tokens=tokens,
+            rc=_rc_by_suffix(run_dir, "-a"),
+            log_text="",
+            started_at="2026-01-01T00:00:00+00:00",
+            duration_s=0.0,
+            timed_out=False,
+            exec_note=None,
+        )
+
+    monkeypatch.setattr("ckdn.app.run.execute", _exec)
+
+
+_SEQUENCE_CFG = (
+    '[check.a]\ncommand = "false"\nparser = "generic"\n'
+    '[check.b]\ncommand = "true"\nparser = "generic"\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("configured", "override", "expected"),
+    [
+        (False, None, ["a", "b"]),  # config decides when nothing overrides it
+        (False, True, ["a"]),  # caller's True beats `fail_fast = false`
+        (True, None, ["a"]),
+        (True, False, ["a", "b"]),  # …and the override works both ways
+    ],
+)
+def test_run_alias_fail_fast_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured: bool,
+    override: bool | None,
+    expected: list[str],
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        _SEQUENCE_CFG + "[check.g]\n"
+        'members = ["a", "b"]\n'
+        f"fail_fast = {str(configured).lower()}\n",
+    )
+    _stub_first_member_fails(monkeypatch)
+    result = run_alias(cfg, cfg.checks["g"], fail_fast=override)
+    assert [m["check"] for m in result.aggregate["members"]] == expected
+
+
+def test_run_check_passes_fail_fast_to_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        _SEQUENCE_CFG + '[check.g]\nmembers = ["a", "b"]\nfail_fast = false\n',
+    )
+    _stub_first_member_fails(monkeypatch)
+    result = run_check(cfg, "g", fail_fast=True)
+    assert isinstance(result, AliasRunResult)
+    assert [m["check"] for m in result.aggregate["members"]] == ["a"]
+
+
+def test_run_check_rejects_fail_fast_for_atomic(tmp_path: Path) -> None:
+    cfg = _load_cfg(tmp_path, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    for override in (True, False):
+        with pytest.raises(FailFastNotApplicableError) as exc:
+            run_check(cfg, "a", fail_fast=override)
+        assert str(exc.value) == (
+            "'a' is a single check, so there is no sequence to stop early; "
+            "fail_fast applies to an alias or to a run of every check"
+        )
 
 
 def test_run_alias_aggregate(tmp_path: Path) -> None:
@@ -314,6 +436,7 @@ def test_run_alias_aggregate(tmp_path: Path) -> None:
     )
     result = run_alias(cfg, cfg.checks["g"])
     assert result.exit_code == 0
+    assert result.alias == "g"
     assert result.aggregate["schema"] == "ckdn.aggregate/1"
     assert result.aggregate["alias"] == "g"
     assert result.aggregate["status"] == "pass"
@@ -340,6 +463,60 @@ def test_list_runs_and_evidence_bounds(tmp_path: Path) -> None:
 
     capped = get_evidence(cfg, artifact=LOG_NAME, limit=MAX_EVIDENCE_LIMIT + 50)
     assert capped["artifact"]["limit"] == MAX_EVIDENCE_LIMIT
+
+
+def test_digest_artifacts_index_every_file_the_run_left_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stored index must match the run directory, `meta.json` included.
+
+    The listing used to be taken before `meta.json` was written, so the
+    provenance document could never appear in it — while `get_evidence`,
+    which lists the same directory after the run, always reported it. One
+    field, two answers, decided by nothing but timing.
+    """
+    _stub_execute_writing(monkeypatch, "report.txt", rc=1)
+    cfg = _load_cfg(tmp_path, '[check.red]\ncommand = "false"\nparser = "generic"\n')
+    result = run_one(cfg, cfg.checks["red"], extra=[])
+
+    assert result.status == "fail"
+    on_disk = sorted(
+        p.name
+        for p in result.run_dir.iterdir()
+        if p.is_file() and p.name != DIGEST_NAME
+    )
+    assert on_disk == [LOG_NAME, META_NAME, "report.txt"]
+    assert result.digest["artifacts"] == on_disk
+    # The digest names itself nowhere: its own bytes must not depend on them.
+    assert DIGEST_NAME not in result.digest["artifacts"]
+
+    stored = json.loads((result.run_dir / DIGEST_NAME).read_text(encoding="utf-8"))
+    assert stored["artifacts"] == on_disk
+    assert get_evidence(cfg)["artifacts"] == stored["artifacts"], (
+        "the live listing and the stored index must not disagree"
+    )
+
+
+def test_meta_is_on_disk_before_the_digest_indexes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the write order, not just its outcome.
+
+    `build_digest` is the moment the index is frozen; if `meta.json` is not
+    already a file by then, no amount of writing it afterwards can put it in.
+    """
+    cfg = _load_cfg(tmp_path, '[check.red]\ncommand = "false"\nparser = "generic"\n')
+    seen: list[bool] = []
+
+    def _spy(**kwargs: Any) -> dict[str, Any]:
+        run_dir = cfg.cwd / str(kwargs["run_dir_rel"])
+        seen.append((run_dir / META_NAME).is_file())
+        return build_digest(**kwargs)
+
+    monkeypatch.setattr("ckdn.app.run.build_digest", _spy)
+    run_one(cfg, cfg.checks["red"], extra=[])
+
+    assert seen == [True], "meta.json must exist before the artifact index is built"
 
 
 def test_evidence_rejects_path_escape(tmp_path: Path) -> None:
@@ -562,8 +739,9 @@ def test_run_alias_not_alias_and_status_fail(
         '[check.ok]\ncommand = "true"\nparser = "generic"\n'
         '[check.g]\nmembers = ["ok"]\n',
     )
-    with pytest.raises(NotAliasError):
+    with pytest.raises(NotAliasError) as not_alias:
         run_alias(cfg, cfg.checks["ok"])
+    assert str(not_alias.value) == "[check.ok] is not an alias"
 
     def _fake_run_one(cfg_arg, check, *, extra=None):  # type: ignore[no-untyped-def]
         run_dir = create_run_dir(cfg_arg.runs_dir, check.name)
@@ -819,3 +997,14 @@ def test_a_worker_thread_cannot_hold_sigint_and_runs_anyway(tmp_path: Path) -> N
     thread.start()
     thread.join()
     assert ran == ["step"]
+
+
+def test_a_result_carries_an_empty_fingerprint_set_by_default() -> None:
+    """Never ``None``: ``ckdn baseline`` reads this set to write the baseline,
+    and an absent one must record nothing rather than crash."""
+    from ckdn.app.types import AtomicRunResult
+
+    result = AtomicRunResult(
+        check="x", status="pass", rc=0, run_dir=Path("."), digest={}, exit_code=0
+    )
+    assert result.fingerprints == frozenset()

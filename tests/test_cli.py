@@ -17,8 +17,9 @@ from ckdn.app import run as app_run
 from ckdn.app.errors import AppError
 from ckdn.app.types import AtomicRunResult
 from ckdn.config import CONFIG_NAME, STARTER_CONFIG, load_config
+from ckdn.config_lock import LOCK_NAME
 from ckdn.digest import DIGEST_NAME
-from ckdn.parsers.base import ParseResult
+from ckdn.parsers.base import Finding, ParseResult
 from ckdn.runner import RunOutcome, create_run_dir, update_latest
 
 
@@ -133,6 +134,35 @@ def test_main_unknown_parser(tmp_path: Path) -> None:
     assert cli.main(["run", "--config", str(cfg), "bad"]) == 2
 
 
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            '[check.a]\ncommand = "true"\nparser = "generic"\ntimeout = "60s"\n',
+            "ckdn: [check.a] timeout must be a number",
+        ),
+        (
+            '[run]\nkeep = "twenty"\n\n'
+            '[check.a]\ncommand = "true"\nparser = "generic"\n',
+            "ckdn: [run].keep must be an integer",
+        ),
+        (
+            '[check.a]\ncommand = "true"\nparser = "generic"\n'
+            '[check.g]\nmembers = ["a"]\nfail_fast = "false"\n',
+            "ckdn: [check.g] fail_fast must be a boolean",
+        ),
+    ],
+)
+def test_mistyped_scalars_exit_two_with_a_clean_message(
+    tmp_path: Path, capsys: Any, body: str, message: str
+) -> None:
+    """These used to escape ``main`` as a raw traceback (or silently coerce)."""
+    path = tmp_path / CONFIG_NAME
+    path.write_text(body, encoding="utf-8")
+    assert cli.main(["run", "--config", str(path), "a"]) == 2
+    assert capsys.readouterr().err.strip() == message
+
+
 def test_parser_crash_becomes_parse_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
@@ -236,13 +266,81 @@ def test_list_corrupt_digest(tmp_path: Path, capsys: Any) -> None:
 
 
 def test_init_writes_and_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    target = tmp_path / CONFIG_NAME
     assert cli.main(["init"]) == 0
-    written = (tmp_path / CONFIG_NAME).read_text(encoding="utf-8")
+    written = target.read_text(encoding="utf-8")
     assert written == STARTER_CONFIG
+    # `init` must name the file it wrote — that path is the whole answer to
+    # "where will `run` look?".
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        f"wrote {target.resolve()}",
+        "reminder: add `.agent-runs/` to .gitignore",
+    ]
     assert cli.main(["init"]) == 2
+    assert capsys.readouterr().err.strip() == (
+        f"ckdn: {target.resolve()} already exists; refusing to overwrite"
+    )
+
+
+def _two_dirs(tmp_path: Path) -> tuple[Path, Path]:
+    """``(project, elsewhere)`` — the config's home and the shell's cwd."""
+    project = tmp_path / "project"
+    elsewhere = tmp_path / "elsewhere"
+    project.mkdir()
+    elsewhere.mkdir()
+    return project, elsewhere
+
+
+def test_init_honours_ckdn_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`CKDN_CWD=/project ckdn init` from elsewhere must write /project.
+
+    Writing beside the process cwd made `ckdn run` report
+    `config not found: <CKDN_CWD>/ckdn.toml (run \\`ckdn init\\` …)` forever.
+    """
+    project, elsewhere = _two_dirs(tmp_path)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("CKDN_CWD", str(project))
+    assert cli.main(["init"]) == 0
+    assert (project / CONFIG_NAME).read_text(encoding="utf-8") == STARTER_CONFIG
+    assert not (elsewhere / CONFIG_NAME).exists()
+    # …and the config `run` would look for is the one `init` just wrote.
+    assert load_config().config_path == (project / CONFIG_NAME).resolve()
+
+
+def test_init_cwd_flag_beats_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, elsewhere = _two_dirs(tmp_path)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("CKDN_CWD", str(elsewhere))
+    assert cli.main(["init", "--cwd", str(project)]) == 0
+    assert (project / CONFIG_NAME).exists()
+    assert not (elsewhere / CONFIG_NAME).exists()
+
+
+def test_init_config_flag_beats_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, elsewhere = _two_dirs(tmp_path)
+    monkeypatch.chdir(elsewhere)
+    explicit = project / "custom.toml"
+    assert cli.main(["init", "--config", str(explicit), "--cwd", str(elsewhere)]) == 0
+    assert explicit.read_text(encoding="utf-8") == STARTER_CONFIG
+    assert not (elsewhere / CONFIG_NAME).exists()
+    assert not (project / CONFIG_NAME).exists()
+
+
+def test_init_refuses_missing_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "nope"
+    assert cli.main(["init", "--cwd", str(missing)]) == 2
+    assert "no such directory" in capsys.readouterr().err
 
 
 def test_main_config_error(tmp_path: Path) -> None:
@@ -341,6 +439,34 @@ def test_main_verify_and_lock_config(tmp_path: Path, capsys: Any) -> None:
     assert cli.main(["verify-config", "--config", str(cfg_path)]) == 0
     assert capsys.readouterr().out.strip() == "ok"
     assert cli.main(["verify-config", "--config", str(cfg_path), "--locked"]) == 0
+
+
+def test_lock_config_honours_output_path(tmp_path: Path) -> None:
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    out_dir = tmp_path / "ci"
+    out_dir.mkdir()
+    target = out_dir / "custom.lock.toml"
+    assert cli.main(["lock-config", "--config", str(cfg_path), "-o", str(target)]) == 0
+    assert "[check.ok]" in target.read_text(encoding="utf-8")
+    assert not (tmp_path / LOCK_NAME).exists()
+
+
+def test_lock_config_refuses_missing_output_directory(
+    tmp_path: Path, capsys: Any
+) -> None:
+    """A typo'd ``-o`` directory is a refusal (exit 2), not a red check (1)."""
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    missing = tmp_path / "nope"
+    target = missing / LOCK_NAME
+    assert cli.main(["lock-config", "--config", str(cfg_path), "-o", str(target)]) == 2
+    assert f"no such directory: {missing}" in capsys.readouterr().err
+    assert not missing.exists()
 
 
 def test_run_one_rejects_alias_as_atomic(tmp_path: Path) -> None:
@@ -561,10 +687,110 @@ def test_baseline_rejects_an_unknown_check(
     assert "configured: ok" in err
 
 
-def test_baseline_refuses_to_record_an_untrusted_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_baseline_refuses_a_missing_output_directory_before_running(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A parse_mismatch is no basis for accepting findings.
+    """A `[run].baseline` path into nowhere is a typo, caught before the cost.
+
+    `baseline.save` writes with a bare `write_text`, so this used to surface as
+    a `FileNotFoundError` traceback and exit 1 -- the "this check is red" code
+    -- *after* every target had already run.
+    """
+    cfg = tmp_path / CONFIG_NAME
+    cfg.write_text(
+        '[run]\nruns_dir = "runs"\nbaseline = "missing/dir/baseline.json"\n\n'
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+        encoding="utf-8",
+    )
+    rc = cli.main(["baseline", "ok", "--config", str(cfg), "--cwd", str(tmp_path)])
+    assert rc == 2
+    assert (
+        f"ckdn: no such directory: {tmp_path / 'missing' / 'dir'}"
+        in capsys.readouterr().err
+    )
+    # Refused before the check ran: no run directory, nothing spent.
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    ("check_top", "shown"),
+    # the [run].top fallback, and a per-check override of it
+    [("", 3), ("top = 5\n", 5)],
+)
+def test_baseline_records_every_finding_but_stores_a_bounded_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    check_top: str,
+    shown: int,
+) -> None:
+    """`ckdn baseline` must record every finding — and leave a bounded digest.
+
+    The baseline needs all 25 fingerprints, but the run it performs is still a
+    run: its stored digest, and the `latest` pointer it publishes, must obey
+    the configured `top` like every other digest. Otherwise the next
+    `get_digest()` returns the whole backlog in one tool result.
+    """
+    cfg_path = tmp_path / CONFIG_NAME
+    cfg_path.write_text(
+        f'[run]\nruns_dir = "{(tmp_path / "runs").as_posix()}"\ntop = 3\n'
+        'baseline = "baseline.json"\n\n'
+        f'[check.x]\ncommand = "cmd"\nparser = "many"\n{check_top}',
+        encoding="utf-8",
+    )
+    findings = [
+        Finding(id=f"F{i}", kind="lint", message=f"m{i}", location=f"a{i}.py:1")
+        for i in range(25)
+    ]
+    seen_top: list[int] = []
+
+    class _Many:
+        name = "many"
+
+        def parse(self, ctx: Any) -> ParseResult:
+            seen_top.append(ctx.top)
+            return ParseResult(parser_ok=True, findings=list(findings))
+
+    def _execute(
+        tokens: list[str],
+        cwd: Path,
+        run_dir: Path,
+        timeout: float | None,
+        env: dict[str, str] | None = None,
+    ) -> RunOutcome:
+        return _outcome(run_dir, 1)
+
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _Many())
+    monkeypatch.setattr(app_run, "execute", _execute)
+
+    rc = cli.main(["baseline", "x", "--config", str(cfg_path), "--cwd", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "recorded 25 finding(s) for x" in out
+    assert f"wrote {tmp_path / 'baseline.json'}" in out
+
+    # every finding is in the baseline -- that is what the command is for
+    recorded = json.loads((tmp_path / "baseline.json").read_text(encoding="utf-8"))
+    assert len(recorded["checks"]["x"]) == 25
+    # ...and the parser was handed the configured cap, not a disabled one
+    assert seen_top == [shown]
+
+    # what it left behind for the next reader is bounded by that same cap
+    assert cli.main(["show", "--config", str(cfg_path), "--cwd", str(tmp_path)]) == 0
+    stored = json.loads(capsys.readouterr().out)
+    assert stored["findings_total"] == 25
+    assert len(stored["findings"]) == shown
+    assert stored["findings_truncated"] == 25 - shown
+
+
+@pytest.mark.parametrize("status", ["parse_mismatch", "error"])
+def test_baseline_refuses_to_record_an_untrusted_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+) -> None:
+    """Neither a parse_mismatch nor an error is a basis for accepting findings.
 
     Recording the empty set it produced would mark every existing finding
     "new" on the next run.
@@ -584,7 +810,7 @@ def test_baseline_refuses_to_record_an_untrusted_result(
     def _mismatch(*_a: object, **_k: object) -> AtomicRunResult:
         return AtomicRunResult(
             check="ok",
-            status="parse_mismatch",
+            status=status,
             rc=1,
             run_dir=tmp_path / "runs" / "x",
             digest={"check": "ok", "findings": []},
@@ -611,18 +837,16 @@ def test_baseline_records_every_member_of_an_alias(
     )
 
     def _one(_cfg: Any, check: Any, extra: Any) -> AtomicRunResult:
-        # The recorded set must not be the digest's top-N slice.
-        assert check.options["top"] == cli.BASELINE_TOP
         return AtomicRunResult(
             check=check.name,
             status="fail",
             rc=1,
             run_dir=tmp_path / "runs" / check.name,
-            digest={
-                "check": check.name,
-                "findings": [{"id": f"{check.name}-1", "message": "x"}],
-            },
+            # The digest shows its top-N slice; the recorded set is the run's
+            # complete fingerprint set, which is not read from the digest.
+            digest={"check": check.name, "findings": [], "findings_total": 1},
             exit_code=1,
+            fingerprints=frozenset({f"fp-{check.name}"}),
         )
 
     monkeypatch.setattr("ckdn.cli.app_run_one", _one)
@@ -699,3 +923,20 @@ def test_gate_flag_makes_the_exit_follow_the_baseline_not_the_run(
     assert cli.main([*args, "--gate"]) == 0
     # Without --gate the exit reports execution truth, unchanged.
     assert cli.main(args) == 1
+
+
+def test_lock_config_refuses_a_directory_as_output(tmp_path: Path, capsys: Any) -> None:
+    """`-o` naming an existing directory is a refusal (exit 2), not a traceback.
+
+    The parent exists, so the missing-directory guard lets it through and the
+    write used to raise ``IsADirectoryError`` and exit 1 -- the code that means
+    "this check is red".
+    """
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    target = tmp_path / "out"
+    target.mkdir()
+    assert cli.main(["lock-config", "--config", str(cfg_path), "-o", str(target)]) == 2
+    assert f"not a file: {target}" in capsys.readouterr().err

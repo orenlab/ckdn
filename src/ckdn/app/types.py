@@ -17,6 +17,11 @@ class AtomicRunResult:
     run_dir: Path
     digest: dict[str, Any]
     exit_code: int
+    #: Fingerprints of **every** finding the run produced, not just the ones
+    #: the digest's top-N slice shows -- the set ``ckdn baseline`` records.
+    #: Empty when ``[run].baseline`` is not configured, since nothing
+    #: classifies findings then and there is no baseline to write to.
+    fingerprints: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

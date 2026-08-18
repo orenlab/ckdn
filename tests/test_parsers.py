@@ -20,6 +20,7 @@ from ckdn.parsers.reformat_text import ReformatTextParser
 from ckdn.parsers.ruff_json import RuffJsonParser
 from ckdn.parsers.sarif import SarifParser
 from ckdn.parsers.ty_text import TyTextParser
+from ckdn.reconcile import reconcile
 
 JUNIT_ONE_FAILURE = """\
 <?xml version="1.0" encoding="utf-8"?>
@@ -683,6 +684,367 @@ def test_bandit_empty_metrics_ok(tmp_path: Path) -> None:
     assert result.parser_ok
 
 
+# --- bandit: tool-side --severity-level / --confidence-level filtering -------
+#
+# Verified against bandit 1.9.4: `metrics` (both `_totals` and the per-file
+# maps) counts every issue the scan found, while `results` is filtered by
+# `--severity-level` / `--confidence-level`. Summing all severity buckets and
+# comparing to len(findings) therefore fires on every filtered run.
+
+
+def _bandit_issue(
+    severity: str,
+    confidence: str = "HIGH",
+    *,
+    test_id: str = "B324",
+    filename: str = "src/a.py",
+    line_number: int = 6,
+) -> dict[str, Any]:
+    """One `results` entry, shaped like the real bandit JSON report."""
+    return {
+        "code": "5 def h(data):\n6     return hashlib.md5(data).hexdigest()\n",
+        "col_offset": 11,
+        "end_col_offset": 28,
+        "filename": filename,
+        "issue_confidence": confidence,
+        "issue_cwe": {
+            "id": 327,
+            "link": "https://cwe.mitre.org/data/definitions/327.html",
+        },
+        "issue_severity": severity,
+        "issue_text": "Use of weak MD5 hash for security.",
+        "line_number": line_number,
+        "line_range": [line_number],
+        "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b324.html",
+        "test_id": test_id,
+        "test_name": "hashlib",
+    }
+
+
+def _bandit_buckets(**counts: int) -> dict[str, int]:
+    """A metrics table with bandit's full bucket set plus the `loc` extras."""
+    table: dict[str, int] = {}
+    for axis in ("SEVERITY", "CONFIDENCE"):
+        for rank in ("UNDEFINED", "LOW", "MEDIUM", "HIGH"):
+            table[f"{axis}.{rank}"] = counts.get(f"{axis}_{rank}".lower(), 0)
+    table.update({"loc": 13, "nosec": 0, "skipped_tests": 0})
+    return table
+
+
+def _skip_note(declared_total: int) -> str:
+    """The exact note the parser records when it abstains from the check."""
+    return (
+        f"bandit metrics count {declared_total} issue(s) that `results` does "
+        "not list; tool-side --severity-level/--confidence-level filtering is "
+        "invisible in metrics, so the metrics cross-check was skipped"
+    )
+
+
+def test_bandit_severity_level_filtering_keeps_parser_ok(tmp_path: Path) -> None:
+    """`--severity-level high`: 3 HIGH survive, 3 LOW are filtered tool-side.
+
+    Transcribed from a real `uvx bandit -r . -f json --severity-level high`
+    run (bandit 1.9.4): `results` holds the 3 HIGH issues, while both the
+    per-file maps and `_totals` still declare all 6.
+    """
+    payload = {
+        "errors": [],
+        "generated_at": "2026-08-17T00:00:00Z",
+        "results": [
+            _bandit_issue("HIGH", filename="src/high.py"),
+            _bandit_issue("HIGH", filename="src/high.py"),
+            _bandit_issue("HIGH", filename="src/low.py"),
+        ],
+        "metrics": {
+            "src/high.py": _bandit_buckets(severity_high=2, confidence_high=2),
+            "src/low.py": _bandit_buckets(
+                severity_high=1, severity_low=3, confidence_high=4
+            ),
+            "_totals": _bandit_buckets(
+                severity_high=3, severity_low=3, confidence_high=6
+            ),
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+    assert len(result.findings) == 3
+    assert result.notes == []
+
+
+def test_bandit_floor_is_the_lowest_rank_present_in_results(tmp_path: Path) -> None:
+    """The floor is the lowest rank `results` shows, not the first or highest.
+
+    HIGH comes first in `results`, so a floor taken from the leading entry (or
+    from the maximum) would count only the HIGH bucket and report a loss.
+    """
+    payload = {
+        "results": [_bandit_issue("HIGH"), _bandit_issue("LOW")],
+        "metrics": {
+            "_totals": _bandit_buckets(
+                severity_high=1, severity_low=1, confidence_high=2
+            )
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+    assert result.notes == []
+
+
+def test_bandit_totals_alias_is_accepted(tmp_path: Path) -> None:
+    """`totals` is the alias the parser accepts alongside bandit's `_totals`.
+
+    With the aggregate table recognised, the per-file map is not summed on
+    top of it; treating `totals` as a per-file entry would double-count.
+    """
+    payload = {
+        "results": [_bandit_issue("LOW")],
+        "metrics": {
+            "src/a.py": _bandit_buckets(severity_low=1, confidence_high=1),
+            "totals": _bandit_buckets(severity_low=1, confidence_high=1),
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+
+
+def test_bandit_per_file_severity_filtering_keeps_parser_ok(tmp_path: Path) -> None:
+    """The per-file metrics branch has the same flaw and the same fix."""
+    payload = {
+        "results": [_bandit_issue("HIGH", filename="src/high.py")],
+        "metrics": {
+            "src/high.py": _bandit_buckets(severity_high=1, confidence_high=1),
+            "src/low.py": _bandit_buckets(severity_low=3, confidence_high=3),
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+
+
+def test_bandit_confidence_level_filtering_keeps_parser_ok(tmp_path: Path) -> None:
+    """`--confidence-level high` filters the orthogonal axis; same fix."""
+    payload = {
+        "results": [_bandit_issue("LOW", "HIGH") for _ in range(2)],
+        "metrics": {
+            "_totals": _bandit_buckets(
+                severity_low=5, confidence_high=2, confidence_low=3
+            )
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+
+
+def test_bandit_both_axes_filtered_skips_cross_check(tmp_path: Path) -> None:
+    """`--severity-level medium --confidence-level high` (i.e. `-ll -ii`).
+
+    Transcribed from a real bandit 1.9.4 run over a file with one HIGH/HIGH
+    (md5), one MEDIUM/MEDIUM (hardcoded /tmp path) and one LOW/HIGH (assert)
+    issue: only the HIGH/HIGH one survives both cuts. Per-axis marginals
+    cannot reconstruct that joint count, so the cross-check abstains.
+    """
+    payload = {
+        "results": [_bandit_issue("HIGH", "HIGH", filename="src/m.py")],
+        "metrics": {
+            "src/m.py": _bandit_buckets(
+                severity_low=1,
+                severity_medium=1,
+                severity_high=1,
+                confidence_medium=1,
+                confidence_high=2,
+            ),
+            "_totals": _bandit_buckets(
+                severity_low=1,
+                severity_medium=1,
+                severity_high=1,
+                confidence_medium=1,
+                confidence_high=2,
+            ),
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+    assert len(result.findings) == 1
+    assert result.notes == [_skip_note(3)]
+
+
+BANDIT_EVERYTHING_FILTERED = {
+    "errors": [],
+    "generated_at": "2026-08-17T00:00:00Z",
+    "results": [],
+    "metrics": {
+        "src/asserts.py": {
+            "CONFIDENCE.HIGH": 5,
+            "CONFIDENCE.LOW": 0,
+            "CONFIDENCE.MEDIUM": 0,
+            "CONFIDENCE.UNDEFINED": 0,
+            "SEVERITY.HIGH": 0,
+            "SEVERITY.LOW": 5,
+            "SEVERITY.MEDIUM": 0,
+            "SEVERITY.UNDEFINED": 0,
+            "loc": 7,
+            "nosec": 0,
+            "skipped_tests": 0,
+        },
+        "_totals": {
+            "CONFIDENCE.HIGH": 5,
+            "CONFIDENCE.LOW": 0,
+            "CONFIDENCE.MEDIUM": 0,
+            "CONFIDENCE.UNDEFINED": 0,
+            "SEVERITY.HIGH": 0,
+            "SEVERITY.LOW": 5,
+            "SEVERITY.MEDIUM": 0,
+            "SEVERITY.UNDEFINED": 0,
+            "loc": 7,
+            "nosec": 0,
+            "skipped_tests": 0,
+        },
+    },
+}
+"""Verbatim `uvx bandit -r . -f json --severity-level medium` output (bandit
+1.9.4) over a file holding five `assert` statements: rc 0, zero results, and
+metrics that still count all five."""
+
+
+def test_bandit_everything_filtered_out_keeps_parser_ok(tmp_path: Path) -> None:
+    """5 LOW issues, `--severity-level medium`: bandit exits 0 with no results.
+
+    The parse is lossless by construction (zero in, zero out), so the metrics
+    totals must not manufacture a permanent parse_mismatch.
+    """
+    _write_json(tmp_path / "bandit.json", BANDIT_EVERYTHING_FILTERED)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is True
+    assert result.findings == []
+    assert result.notes == [_skip_note(5)]
+
+
+def test_bandit_empty_results_with_failing_rc_still_trips(tmp_path: Path) -> None:
+    """rc != 0 means bandit found issues at or above its level; `results` must
+    not be empty. Filtering cannot explain this, so the guard still fires."""
+    _write_json(tmp_path / "bandit.json", BANDIT_EVERYTHING_FILTERED)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is False
+    assert any("metrics imply 5 issue(s) but 0 were parsed" in n for n in result.notes)
+
+
+def test_bandit_lost_finding_above_the_floor_still_trips(tmp_path: Path) -> None:
+    """Regression guard: 3 HIGH declared at or above the observed floor but
+    only 2 parsed is a lost finding, not filtering."""
+    payload = {
+        "results": [_bandit_issue("HIGH") for _ in range(2)],
+        "metrics": {
+            "_totals": _bandit_buckets(
+                severity_high=3, severity_low=3, confidence_high=6
+            )
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is False
+    assert any("metrics imply 3 issue(s) but 2 were parsed" in n for n in result.notes)
+
+
+def test_bandit_more_parsed_than_declared_still_trips(tmp_path: Path) -> None:
+    """Filtering only ever removes results, so parsing more than the metrics
+    declare is a contradiction in either direction."""
+    payload = {
+        "results": [_bandit_issue("HIGH") for _ in range(4)],
+        "metrics": {"_totals": _bandit_buckets(severity_high=3, confidence_high=3)},
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is False
+    assert any("metrics imply 3 issue(s) but 4 were parsed" in n for n in result.notes)
+
+
+def test_bandit_unrecognised_severity_values_skip_that_axis(tmp_path: Path) -> None:
+    """A `results` entry whose severity is not one of bandit's four ranks gives
+    no floor for that axis; the confidence axis still carries the check."""
+    payload = {
+        "results": [_bandit_issue("BOGUS", "HIGH")],
+        "metrics": {"_totals": _bandit_buckets(severity_low=4, confidence_high=1)},
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+    # The confidence axis was usable, so the check ran rather than abstained.
+    assert result.notes == []
+
+
+def test_bandit_unreadable_results_entries_do_not_hide_the_floor(
+    tmp_path: Path,
+) -> None:
+    """Robustness: entries the floor scan has to skip must not end the scan.
+
+    A non-dict entry and an unrecognised severity both precede the one entry
+    that carries the real severity floor. Abandoning the scan at either would
+    lose the severity axis entirely.
+    """
+    payload = {
+        "results": [
+            "not a dict",
+            _bandit_issue("BOGUS", "HIGH"),
+            _bandit_issue("HIGH", "HIGH"),
+        ],
+        "metrics": {
+            "_totals": _bandit_buckets(
+                severity_low=3, severity_high=2, confidence_high=5
+            )
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert len(result.findings) == 2
+    assert result.parser_ok is True
+    assert result.notes == []
+
+
+@pytest.mark.parametrize(
+    ("declared", "parser_ok", "note"),
+    [(4, False, "metrics imply 4 issue(s) but 1 were parsed"), (1, True, None)],
+)
+def test_bandit_no_usable_axis_compares_the_declared_total(
+    tmp_path: Path, declared: int, parser_ok: bool, note: str | None
+) -> None:
+    """No recognisable rank on either axis: no discount is justified.
+
+    Being unable to infer how much filtering removed is not a licence to accept
+    any gap, so the declared total is compared as it stands -- 4 declared
+    against 1 parsed is a lost parse, while counts that agree are trusted.
+    """
+    payload = {
+        "results": [_bandit_issue("BOGUS", "BOGUS")],
+        "metrics": {
+            "_totals": _bandit_buckets(severity_low=declared, confidence_high=declared)
+        },
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is parser_ok
+    if note is None:
+        assert result.notes == []
+    else:
+        assert any(note in n for n in result.notes)
+
+
+def test_bandit_all_zero_metrics_never_trip(tmp_path: Path) -> None:
+    """A clean scan declares zeros everywhere; the guard stays silent."""
+    payload = {
+        "results": [],
+        "metrics": {"_totals": _bandit_buckets()},
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is True
+    assert result.notes == []
+
+
 # --- pylint -----------------------------------------------------------------
 
 PYLINT_JSON = """\
@@ -740,6 +1102,241 @@ def test_pylint_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:
 def test_pylint_missing_report_flips_parser_ok(tmp_path: Path) -> None:
     result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
     assert result.parser_ok is False
+
+
+# Captured verbatim from `uvx pylint clean.py --enable=useless-suppression
+# --output-format=json2` (pylint 4.0.7), on a module whose only remark is a
+# needless `# pylint: disable=invalid-name`. That run exits 0: pylint's rc is
+# a bitmask over F/E/W/R/C (1/2/4/8/16) and the informational class has no
+# bit. `absolutePath` is dropped because it is machine-specific.
+PYLINT_INFO_ONLY_JSON = """\
+{
+    "messages": [
+        {
+            "type": "info",
+            "symbol": "useless-suppression",
+            "message": "Useless suppression of 'invalid-name'",
+            "messageId": "I0021",
+            "confidence": "UNDEFINED",
+            "module": "clean",
+            "obj": "",
+            "line": 6,
+            "column": 0,
+            "endLine": null,
+            "endColumn": null,
+            "path": "clean.py"
+        }
+    ],
+    "statistics": {
+        "messageTypeCount": {
+            "fatal": 0,
+            "error": 0,
+            "warning": 0,
+            "refactor": 0,
+            "convention": 0,
+            "info": 1
+        },
+        "modulesLinted": 3,
+        "score": 10.0
+    }
+}
+"""
+
+
+def test_pylint_informational_messages_are_not_findings(tmp_path: Path) -> None:
+    """An info-only pylint run exits 0; it must not manufacture findings.
+
+    A finding alongside ``rc == 0`` reconciles to ``parse_mismatch``, which
+    the user cannot fix from ckdn's side.
+    """
+    (tmp_path / "pylint.json").write_text(PYLINT_INFO_ONLY_JSON, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is True
+    assert result.findings == []
+    assert result.summary["info_count"] == 1
+    assert result.summary["message_count"] == 0
+
+
+def test_pylint_info_only_run_reconciles_to_pass(tmp_path: Path) -> None:
+    """End-to-end: rc 0 plus informational output is a pass, not a mismatch."""
+    (tmp_path / "pylint.json").write_text(PYLINT_INFO_ONLY_JSON, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0))
+    status, _reason, _tail = reconcile(0, result)
+    assert status == "pass"
+
+
+def test_pylint_info_still_counted_for_the_statistics_crosscheck(
+    tmp_path: Path,
+) -> None:
+    """Dropping info findings must not blind ``_verify_counts``.
+
+    ``statistics.messageTypeCount`` declares an ``info`` bucket, so the
+    parser has to keep counting info messages even though they never become
+    findings -- otherwise the guard trades one false ``parse_mismatch`` for
+    another.
+    """
+    lying = PYLINT_INFO_ONLY_JSON.replace('"info": 1', '"info": 5')
+    (tmp_path / "pylint.json").write_text(lying, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is False
+    assert any("messageTypeCount[info]=5" in n for n in result.notes)
+
+
+# Captured verbatim from `uvx pylint mixed.py --enable=useless-suppression
+# --output-format=json2` (pylint 4.0.7); that run exits 16 -- the convention
+# bit alone, with the info message contributing nothing.
+PYLINT_MIXED_JSON = """\
+{
+    "messages": [
+        {
+            "type": "convention",
+            "symbol": "missing-module-docstring",
+            "message": "Missing module docstring",
+            "messageId": "C0114",
+            "confidence": "HIGH",
+            "module": "mixed",
+            "obj": "",
+            "line": 1,
+            "column": 0,
+            "path": "mixed.py"
+        },
+        {
+            "type": "info",
+            "symbol": "useless-suppression",
+            "message": "Useless suppression of 'invalid-name'",
+            "messageId": "I0021",
+            "confidence": "UNDEFINED",
+            "module": "mixed",
+            "obj": "",
+            "line": 2,
+            "column": 0,
+            "path": "mixed.py"
+        }
+    ],
+    "statistics": {
+        "messageTypeCount": {
+            "fatal": 0,
+            "error": 0,
+            "warning": 0,
+            "refactor": 0,
+            "convention": 1,
+            "info": 1
+        },
+        "modulesLinted": 3,
+        "score": 0
+    }
+}
+"""
+
+
+def test_pylint_mixed_report_keeps_only_the_scoring_message(tmp_path: Path) -> None:
+    """Info is filtered out of findings while its neighbours survive intact."""
+    (tmp_path / "pylint.json").write_text(PYLINT_MIXED_JSON, encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=16))
+    assert result.parser_ok is True
+    assert [f.id for f in result.findings] == ["C0114 mixed.py:1:0"]
+    assert result.summary["info_count"] == 1
+    assert result.summary["by_type"] == {"convention": 1, "info": 1}
+
+
+def test_pylint_info_message_does_not_truncate_the_scan(tmp_path: Path) -> None:
+    """An info message skips itself, not the rest of the list.
+
+    pylint emits messages in source order, so an informational remark can sit
+    ahead of a real one. Abandoning the loop there would silently swallow
+    every finding behind it.
+    """
+    payload = {
+        "messages": [
+            {
+                "type": "info",
+                "messageId": "I0021",
+                "symbol": "useless-suppression",
+                "message": "Useless suppression of 'invalid-name'",
+                "path": "a.py",
+                "line": 1,
+                "column": 0,
+            },
+            {
+                "type": "error",
+                "messageId": "E0602",
+                "symbol": "undefined-variable",
+                "message": "Undefined variable 'x'",
+                "path": "a.py",
+                "line": 9,
+                "column": 4,
+            },
+        ],
+        "statistics": {
+            "messageTypeCount": {"info": 1, "error": 1},
+            "score": 5.0,
+        },
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=2))
+    assert result.parser_ok is True
+    assert [f.id for f in result.findings] == ["E0602 a.py:9:4"]
+    assert result.summary["info_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "msg_type",
+    ["fatal", "error", "warning", "refactor", "convention"],
+)
+def test_pylint_scoring_classes_all_become_findings(
+    tmp_path: Path, msg_type: str
+) -> None:
+    """Every class that owns an rc bit must still produce a finding."""
+    payload = {
+        "messages": [
+            {
+                "type": msg_type,
+                "messageId": "X0001",
+                "symbol": "some-symbol",
+                "message": "boom",
+                "path": "a.py",
+                "line": 3,
+                "column": 2,
+            }
+        ],
+        "statistics": {"messageTypeCount": {msg_type: 1, "info": 0}, "score": 1.0},
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok is True
+    assert [f.id for f in result.findings] == ["X0001 a.py:3:2"]
+    assert result.summary["info_count"] == 0
+
+
+def test_pylint_info_lookalike_types_are_not_filtered(tmp_path: Path) -> None:
+    """Only the exact ``info`` class is exempt -- no prefix or substring match."""
+    payload = {
+        "messages": [
+            {
+                "type": "information",
+                "messageId": "X0002",
+                "symbol": "s",
+                "message": "m",
+                "path": "a.py",
+                "line": 1,
+                "column": 0,
+            },
+            {
+                "type": "informational",
+                "messageId": "X0003",
+                "symbol": "s",
+                "message": "m",
+                "path": "a.py",
+                "line": 2,
+                "column": 0,
+            },
+        ],
+        "statistics": {"score": 1.0},
+    }
+    _write_json(tmp_path / "pylint.json", payload)
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=1))
+    assert len(result.findings) == 2
+    assert result.summary["info_count"] == 0
 
 
 # --- sarif ------------------------------------------------------------------
@@ -1191,3 +1788,19 @@ def test_pyright_missing_general_diagnostics_flips_parser_ok(tmp_path: Path) -> 
     result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log='{"summary": {}}'))
     assert result.parser_ok is False
     assert any("generalDiagnostics" in n for n in result.notes)
+
+
+def test_bandit_unusable_results_entries_still_trip_the_guard(tmp_path: Path) -> None:
+    """`results` is non-empty but nothing in it parses.
+
+    That is a lost parse, not tool-side filtering: the abstention branch exists
+    for a report whose ranks were cut, not for one the parser could not read.
+    """
+    payload = {
+        "results": ["not-a-dict", 42],
+        "metrics": {"_totals": _bandit_buckets(severity_high=2, confidence_high=2)},
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is False
+    assert any("metrics imply 2 issue(s) but 0 were parsed" in n for n in result.notes)

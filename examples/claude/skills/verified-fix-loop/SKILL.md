@@ -1,16 +1,20 @@
+---
+name: verified-fix-loop
+description: >-
+  Run project checks (tests, coverage, types, lint, pre-commit hooks, builds)
+  through ckdn and fix findings in a bounded loop. Use this skill whenever the
+  task is to fix failing tests, restore coverage, resolve type or lint errors,
+  make CI green, or verify that edits did not break anything — even if the user
+  does not mention ckdn by name. Never run pytest/ruff/ty/pre-commit directly
+  and never read raw tool logs when a ckdn check exists for them. When ckdn MCP
+  is connected, prefer MCP tools over shell; pass cwd on every call when the
+  project root differs from the config file location (worktrees, Glass slices).
+---
+
 <!--
 SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
 SPDX-License-Identifier: MIT
 -->
----
-name: verified-fix-loop
-description: Run project checks (tests, coverage, types, lint, pre-commit hooks, builds) through ckdn and fix findings
-in a bounded loop. Use this skill whenever the task is to fix failing tests, restore coverage, resolve type or lint
-errors, make CI green, or verify that edits did not break anything — even if the user does not mention ckdn by name.
-Never run pytest/ruff/ty/pre-commit directly and never read raw tool logs when a ckdn check exists for them. When ckdn
-MCP is connected, prefer MCP tools over shell; pass cwd on every call when the project root differs from the config file
-location (worktrees, Glass slices).
----
 
 # Verified Fix Loop
 
@@ -35,7 +39,13 @@ MCP `run_check` for the same fix loop unless the user asks to switch.
 | Run atomic check   | `ckdn run <check>`     | `run_check`    |
 | Run alias          | `ckdn run <alias>`     | `run_group`    |
 | Read latest digest | stdout / `ckdn show`   | `get_digest`   |
-| Bounded evidence   | `ckdn show --evidence` | `get_evidence` |
+| Bounded evidence   | `ckdn show [run-id]`   | `get_evidence` |
+
+There is no `ckdn show --evidence`: the CLI `show` takes only a run id plus
+`--config` / `--cwd`, and prints the stored digest — the bounded `findings`
+and `log_tail` already in it. Artifact line-slicing exists only as the MCP
+`get_evidence` tool (`artifact` + `offset` / `limit`); on the CLI, going past
+the digest means reading a named artifact under the run's `run_dir` yourself.
 
 MCP trust rules match the CLI: `fail` / `error` / `parse_mismatch` are
 normal structured results, not tool failures. Only configured checks —
@@ -46,8 +56,11 @@ never invent shell commands.
 Subprocesses and relative `.agent-runs/` resolve from **cwd**, not from
 where `ckdn.toml` lives.
 
-Resolution order (CLI and MCP): per-call `--cwd` / `cwd` argument →
-`CKDN_CWD` → `ckdn-mcp --cwd` (MCP server default) → process cwd.
+Resolution order over MCP: per-call `cwd` argument → `ckdn-mcp --cwd`
+(server default) → `CKDN_CWD` → process cwd. The server default outranks the
+environment, so `CKDN_CWD` cannot silently redirect a server that was started
+with `--cwd`. On the CLI there is no server default: `--cwd` → `CKDN_CWD` →
+process cwd.
 
 **Worktree / Glass / temp-config slices:** when `ckdn.toml` is outside
 the project tree (e.g. config in `/tmp`, code in a worktree), pass the

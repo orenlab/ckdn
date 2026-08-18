@@ -446,9 +446,22 @@ def test_a_killed_run_is_named_in_the_next_runs_warning(tmp_path: Path) -> None:
     holder.kill()
     holder.wait()
 
-    with run_lock(tmp_path, "named") as note:
-        assert note is not None
-        assert f"ckdn pid {holder_pid}" in note
+    # `wait()` reaps the process, but Windows closes its handles asynchronously,
+    # so the kernel can still hold the lock for a few milliseconds afterwards.
+    # Retry briefly instead of asserting an instantaneous release the platform
+    # never promised: a lock that is genuinely never released still fails here,
+    # only later. On POSIX the first attempt already succeeds.
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            with run_lock(tmp_path, "named") as note:
+                assert note is not None
+                assert f"ckdn pid {holder_pid}" in note
+            return
+        except RunLockError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
 
 
 @pytest.mark.skipif(

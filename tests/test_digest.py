@@ -6,12 +6,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ckdn import DIGEST_SCHEMA
 from ckdn.digest import (
+    DIGEST_NAME,
+    META_NAME,
     build_alias_aggregate,
     build_digest,
     dump_json,
     dump_json_pretty,
+    list_artifacts,
     prune_summary,
 )
 from ckdn.parsers.base import Finding, ParseResult
@@ -218,3 +223,44 @@ def test_tail_nonpositive() -> None:
 
     assert tail("a\nb\nc", 0) == []
     assert dump_json({"x": False})  # false omitted by sparse? dump_json doesn't prune
+
+
+def test_list_artifacts_excludes_only_the_digest(tmp_path: Path) -> None:
+    """`digest.json` is the document being built; every sibling is readable.
+
+    `meta.json` in particular: `docs/digests.md` points readers at it and
+    `get_evidence` serves it, so it belongs in the index rather than beside it.
+    """
+    # Spelled out, not via the constants: these are the on-disk names
+    # `docs/digests.md` promises consumers, so renaming one is a contract
+    # break that a test written against the constants would follow silently.
+    for name in ("digest.json", "meta.json", "full.log", "junit.xml"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+
+    assert list_artifacts(tmp_path) == ["full.log", "junit.xml", "meta.json"]
+    assert (DIGEST_NAME, META_NAME) == ("digest.json", "meta.json")
+
+
+def test_list_artifacts_skips_directories(tmp_path: Path) -> None:
+    (tmp_path / "full.log").write_text("x", encoding="utf-8")
+    (tmp_path / "docs-build").mkdir()
+
+    assert list_artifacts(tmp_path) == ["full.log"]
+
+
+def test_list_artifacts_sorts_whatever_order_the_filesystem_gives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ordering is ours, not the filesystem's.
+
+    Real directory order is unspecified and differs per OS, so it is faked
+    here: the digest has to be byte-identical across platforms, and an
+    unsorted index would break that without failing anywhere else.
+    """
+    names = ["junit.xml", DIGEST_NAME, "full.log", META_NAME]
+    for name in names:
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    reversed_order = [tmp_path / name for name in names]
+    monkeypatch.setattr(Path, "iterdir", lambda self: iter(reversed_order))
+
+    assert list_artifacts(tmp_path) == ["full.log", "junit.xml", META_NAME]

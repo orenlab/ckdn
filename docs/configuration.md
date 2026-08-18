@@ -37,19 +37,64 @@ format = "json"
 command = "uv run ruff check --output-format json --output-file {run_dir}/ruff.json ."
 parser = "ruff"
 
+[check.format]
+command = "uv run ruff format --check ."
+parser = "reformat"
+
 [check.lint]
 members = ["ruff"]               # add pylint / bandit / … when enabled
 
 [check.style]
-members = ["format", "ruff"]     # format + lint atomics
+members = ["format", "ruff"]     # runs format first, then ruff
 ```
+
+Every member an alias names must exist. A `members` entry that no
+`[check.<name>]` defines is rejected when the file loads, so the mistake takes
+down *every* command — not just the alias that made it.
+
+## Run settings
+
+`[run]` keys, with their defaults:
+
+- `runs_dir = ".agent-runs"` — where run artifacts live. Relative paths
+  resolve from cwd.
+- `keep = 20` — how many *finished* run directories `runs_dir` retains, across
+  all checks. An unfinished run is never pruned, so a fast check cannot delete
+  a slow one's directory out from under it.
+- `top = 20` — max findings listed in a digest; a check may override it.
+- `max_snippet_lines = 12` — max detail lines per finding.
+- `log_tail_lines = 40` — how many log lines a digest carries when it includes
+  a tail.
+- `command_policy = "workspace"` — see [Command policy](#command-policy).
+- `baseline` — unset. Path to the baseline file; like `runs_dir`, a relative
+  path resolves from **cwd**, not from the config file's parent. See
+  [Baselines](baselines.md).
+
+The four integers (`keep`, `top`, `max_snippet_lines`, `log_tail_lines`) are
+strict: a string, a float or a bool is a config error (exit 2), never a silent
+coercion. `keep = 2.5` is a typo, not a request for two — the number you wrote
+is not the number you meant, and ckdn says so instead of guessing. The same
+holds elsewhere — `timeout` takes an integer or a float **greater than zero**,
+and `fail_fast` must be a real TOML boolean, so `fail_fast = "false"` is
+rejected rather than read as the truthy string it is.
 
 ## Checks
 
 **Atomic** check: `command` + `parser` (required), optional `timeout` in
-seconds (a timeout yields `rc=124` and a non-green status). Any other key is
-passed to the parser as an option (`fail_under`, `score_fail_under`,
-`fail_levels`, …).
+seconds — a TOML number greater than zero, never a string. `timeout = 0` is
+refused rather than read as "no limit": a deadline that has already passed
+would kill the check the moment it starts. To run without a limit, leave
+`timeout` out entirely. A timeout yields `rc=124` and status `error`
+specifically, never `fail`: the tool was killed mid-flight, and partial
+evidence is not a verdict.
+
+Most other keys are passed to the parser as options (`fail_under`,
+`score_fail_under`, `fail_levels`, …); `fail_fast` is rejected outright on an
+atomic check. Two more are not just parser options:
+
+- **`env`** is reserved and never reaches the parser (see below).
+- **`top`** does reach the parser, but ckdn reads it too: it overrides
+  `[run].top` for this check's digest only.
 
 !!! warning "Set a `timeout` on long checks"
 
@@ -83,8 +128,14 @@ parser = "coverage"
 env = { COVERAGE_FILE = "{run_dir}/.coverage", PYTHONWARNINGS = "error" }
 ```
 
-**Alias**: `members = ["atomic", …]` only (optional `fail_fast`). No nesting.
-See [Aliases & aggregates](aliases.md).
+**Alias**: `members = ["atomic", …]` only (optional `fail_fast`). Membership is
+validated when the file loads, with four distinct errors: a member no
+`[check.<name>]` defines, a member that is itself an alias (nesting is
+unsupported — which is why a cycle cannot be expressed at all), an alias
+listing itself, and a member listed twice. The duplicate is a hard error, not
+a silent de-duplication: it is always a mistake, and running the same tool
+twice in one sequence is never what was meant. See
+[Aliases & aggregates](aliases.md).
 
 Commands are tokenized with `shlex` and run **without a shell** — no pipes, no
 redirects, no `&&`. Deliberate: a shell pipeline is exactly where exit codes
@@ -96,13 +147,35 @@ into the run directory.
 ## Command policy
 
 Default `workspace`: before any subprocess starts, path-like argv tokens must
-resolve inside the invocation `cwd` (`--cwd` / `CKDN_CWD`). `/etc/passwd`,
-`..` escapes, and paths under `/etc`, `/proc`, `~/.ssh`, etc. are rejected.
-MCP `extra_args` are subject to the same rules.
+resolve inside the invocation `cwd` (`--cwd` / `CKDN_CWD`). `..` escapes and
+absolute paths outside cwd are rejected by that containment check. A second,
+narrower denylist — `/etc`, `/proc`, `/sys`, `/dev` and `~/.ssh`, `~/.aws`,
+`~/.gnupg`, `~/.netrc`, `~/.docker`, `~/.kube` — applies to paths that pass
+containment, so it only bites when cwd is itself inside one of them. MCP
+`extra_args` are subject to the same rules.
 
-- Set `command_policy = "allowlist"` to require configured command prefixes
-  (`uv run `, `uvx `, …, or custom `[run.command_allowlist].prefixes`).
-- Use `command_policy = "off"` only for exotic workflows.
+The three settings are not a spectrum from loose to strict:
+
+- `allowlist` **narrows** `workspace`. Containment still applies in full, and
+  the configured command must *additionally* match an allowed prefix. An
+  approved executable is still not allowed to read outside the workspace.
+- `off` is the only setting that widens, and it drops both conditions. Use it
+  only when you accept full subprocess scope.
+
+The built-in prefix set is exactly `uv run `, `uvx `, `true` and `false`. The
+last two carry no trailing space, so they match on a word boundary — the bare
+command, or the command followed by a space and arguments: `truex` is rejected,
+`true --wat` is not. Custom `[run.command_allowlist].prefixes` **replace** that
+set instead of extending it, so list every prefix you still need. Uncommenting
+the starter's `prefixes = ["make ", "./scripts/"]` blocks every check the
+starter ships: seven begin `uv run `, and `[check.lock]` (`uv lock --check`)
+matches neither prefix. Note that `uv lock --check` is outside the built-in set
+too, so `allowlist` blocks it even with no custom `prefixes`.
+
+A rejected check is not an exception and does not abort the run. It gets a
+normal run directory and digest, an empty `full.log`, `rc` 126 and status
+`error`, and a note naming the prefixes that were allowed. No subprocess is
+ever started.
 
 In CI, `ckdn lock-config` then `ckdn verify-config --locked` catches tampered
 commands without running them.
@@ -138,9 +211,11 @@ never run a command and are separate from the [status model](status-model.md).
 Subprocesses and relative `.agent-runs/` resolve from **cwd**, not from where
 `ckdn.toml` lives.
 
-- **CLI:** `--cwd` / `CKDN_CWD`.
-- **MCP:** per-call `cwd` on every config-using tool, or `CKDN_CWD` /
-  `ckdn-mcp --cwd` as server defaults.
+- **CLI:** `--cwd` → `CKDN_CWD` → process cwd.
+- **MCP:** per-call `cwd` (accepted by every config-using tool) →
+  `ckdn-mcp --cwd` → `CKDN_CWD` → process cwd. The server's own `--cwd`
+  outranks the environment, so an explicitly launched server is not silently
+  redirected by a stray variable.
 
 When the config file is outside the project tree (worktree, temp config), pass
 the project root as cwd on every run — otherwise tools execute in the wrong

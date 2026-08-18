@@ -9,12 +9,15 @@ import dataclasses
 import datetime as dt
 import signal
 from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
 from typing import Any, TypeVar
 
 from ckdn import baseline
 from ckdn.app.errors import (
     AliasExtraArgsError,
     AppError,
+    BaselineLoadError,
+    FailFastNotApplicableError,
     NotAliasError,
     NotAtomicError,
     UnknownCheckError,
@@ -28,7 +31,8 @@ from ckdn.digest import (
     build_digest,
     build_meta,
     list_artifacts,
-    write_documents,
+    write_digest,
+    write_meta,
 )
 from ckdn.parsers import available_parsers, get_parser
 from ckdn.parsers.base import ParseContext, Parser, ParseResult
@@ -56,26 +60,50 @@ def exit_from_outcome(rc: int, status: str) -> int:
     return 0 if status == "pass" else 1
 
 
+def load_baseline(path: Path) -> dict[str, set[str]]:
+    """Read a baseline file, restating its failures as an :class:`AppError`.
+
+    :mod:`ckdn.baseline` is a pure module and raises its own
+    :class:`~ckdn.baseline.BaselineError`; the transports only know how to
+    report ``AppError``. Translating here is what makes a corrupt baseline a
+    clean refusal on the CLI and an ``isError`` over MCP, instead of a
+    traceback out of whichever one called it.
+    """
+    try:
+        return baseline.load(path)
+    except baseline.BaselineError as exc:
+        raise BaselineLoadError(str(exc)) from exc
+
+
 def _annotate_baseline(
-    cfg: Config,
+    loaded: dict[str, set[str]] | None,
     check_name: str,
     execution_status: str,
     result: ParseResult,
     digest: dict[str, Any],
-) -> None:
+) -> frozenset[str]:
     """Classify findings against the baseline and attach ``baseline``/``gate``.
 
     Execution truth (``digest['status']``) is never touched — see
-    :mod:`ckdn.baseline`. Only runs when ``[run].baseline`` is configured.
+    :mod:`ckdn.baseline`. ``loaded`` is ``None`` when ``[run].baseline`` is not
+    configured; it is read by the caller before the check starts, so nothing
+    here can fail on a file and abandon a run that already produced evidence.
+
+    Returns the fingerprints of every finding of the run (empty when no
+    baseline is configured). They are computed here anyway, and handing them
+    back is what lets ``ckdn baseline`` record the complete set without asking
+    the digest to carry an unbounded findings list.
     """
-    baseline_path = cfg.baseline_path
-    if baseline_path is None:
-        return
-    accepted = baseline.load(baseline_path).get(check_name, set())
+    if loaded is None:
+        return frozenset()
+    accepted = loaded.get(check_name, set())
+    seen: set[str] = set()
     new = 0
     known = 0
     for finding in result.findings:
-        if baseline.fingerprint(check_name, finding.to_dict()) in accepted:
+        fingerprint = baseline.fingerprint(check_name, finding.to_dict())
+        seen.add(fingerprint)
+        if fingerprint in accepted:
             known += 1
         else:
             new += 1
@@ -84,7 +112,14 @@ def _annotate_baseline(
             shown["baselined"] = True
     if known or new:
         digest["baseline"] = {"known": known, "new": new}
-    digest["gate"] = baseline.gate(execution_status, result.parser_ok, new)
+    digest["gate"] = baseline.gate(
+        execution_status,
+        result.parser_ok,
+        new,
+        known_count=known,
+        gate_failures=result.gate_failures,
+    )
+    return frozenset(seen)
 
 
 @contextlib.contextmanager
@@ -173,10 +208,25 @@ def run_one(
             "available: " + ", ".join(available_parsers())
         )
 
+    # The baseline is only *needed* at annotation time, but it is *known* at
+    # config time, so it is read here — before the run directory exists and
+    # before the tool spends a second. Reading it late is what let an
+    # unusable file abort a finished run, leaving a directory with a log and
+    # no digest: the orphan `_uninterruptible` exists to prevent, and one
+    # `prune` will keep forever because it has no digest to call it finished.
+    baseline_path = cfg.baseline_path
+    accepted = None if baseline_path is None else load_baseline(baseline_path)
+
     try:
         with run_lock(cfg.runs_dir, check.name) as lock_note:
             return _run_atomic(
-                cfg, check, check.command, parser, list(extra or ()), lock_note
+                cfg,
+                check,
+                check.command,
+                parser,
+                list(extra or ()),
+                lock_note,
+                accepted=accepted,
             )
     except RunLockError as exc:
         raise AppError(str(exc)) from exc
@@ -189,8 +239,14 @@ def _run_atomic(
     parser: Parser,
     extra: list[str],
     lock_note: str | None = None,
+    *,
+    accepted: dict[str, set[str]] | None,
 ) -> AtomicRunResult:
-    """Execute one already-validated atomic check while holding its lock."""
+    """Execute one already-validated atomic check while holding its lock.
+
+    ``accepted`` is the already-loaded baseline (``None`` when none is
+    configured), read by :func:`run_one` before this ran.
+    """
     run_dir = create_run_dir(cfg.runs_dir, check.name)
     tokens = build_tokens(command, run_dir, extra)
     policy_blocked = False
@@ -284,7 +340,7 @@ def _run_atomic(
     except ValueError:
         run_dir_rel = run_dir.as_posix()
 
-    def _finalize() -> tuple[str, dict[str, Any]]:
+    def _finalize() -> tuple[str, dict[str, Any], frozenset[str]]:
         # Building the documents belongs inside the protected step, not just
         # writing them: a Ctrl-C in reconcile or build_digest would otherwise
         # abandon a run directory that has a log but no digest — the same
@@ -296,6 +352,14 @@ def _run_atomic(
             timed_out=outcome.timed_out,
         )
         meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
+        # The provenance document is written before the run directory is
+        # listed, so the digest can index it. Bundling both writes after the
+        # listing is what dropped meta.json from every digest ever emitted.
+        # Order is safe on a retry of this step: build_meta is a pure function
+        # of `outcome`, so the bytes are identical, and digest.json — written
+        # last, and excluded from the listing regardless — cannot leak into
+        # its own index.
+        write_meta(run_dir, meta)
         digest = build_digest(
             check=check.name,
             status=status,
@@ -308,13 +372,13 @@ def _run_atomic(
             tail_lines=cfg.run.log_tail_lines,
             artifacts=list_artifacts(run_dir),
         )
-        _annotate_baseline(cfg, check.name, status, result, digest)
-        write_documents(run_dir, digest, meta)
+        fingerprints = _annotate_baseline(accepted, check.name, status, result, digest)
+        write_digest(run_dir, digest)
         update_latest(cfg.runs_dir, run_dir)
         prune(cfg.runs_dir, cfg.run.keep)
-        return status, digest
+        return status, digest, fingerprints
 
-    status, digest = _uninterruptible(_finalize)
+    status, digest, fingerprints = _uninterruptible(_finalize)
 
     return AtomicRunResult(
         check=check.name,
@@ -323,6 +387,7 @@ def _run_atomic(
         run_dir=run_dir,
         digest=digest,
         exit_code=exit_from_outcome(outcome.rc, status),
+        fingerprints=fingerprints,
     )
 
 
@@ -345,15 +410,21 @@ def _alias_aggregate_exit(results: list[AtomicRunResult]) -> int:
     return 0
 
 
-def run_alias(cfg: Config, alias: CheckConfig) -> AliasRunResult:
-    """Run an alias's members in order; return aggregate + member results."""
+def run_alias(
+    cfg: Config, alias: CheckConfig, *, fail_fast: bool | None = None
+) -> AliasRunResult:
+    """Run an alias's members in order; return aggregate + member results.
+
+    ``fail_fast`` overrides the alias's configured value when it is a bool;
+    ``None`` (the default) leaves ``ckdn.toml`` in charge.
+    """
     if not alias.is_alias or alias.members is None:
         raise NotAliasError(f"[check.{alias.name}] is not an alias")
 
     results = _run_sequence(
         cfg,
         (cfg.checks[name] for name in alias.members),
-        fail_fast=alias.fail_fast,
+        fail_fast=alias.fail_fast if fail_fast is None else fail_fast,
     )
 
     exit_code = _alias_aggregate_exit(results)
@@ -414,8 +485,15 @@ def run_check(
     name: str,
     *,
     extra: list[str] | None = None,
+    fail_fast: bool | None = None,
 ) -> AtomicRunResult | AliasRunResult:
-    """Dispatch by check kind. Aliases reject ``extra``."""
+    """Dispatch by check kind.
+
+    Aliases reject ``extra``; atomic checks reject ``fail_fast``. An atomic
+    check is one command, so there is no sequence for ``fail_fast`` to
+    control — accepting it silently is how an explicit request came to mean
+    nothing at all.
+    """
     check = cfg.checks.get(name)
     if check is None:
         raise UnknownCheckError(
@@ -429,5 +507,11 @@ def run_check(
                 "run an atomic member check instead "
                 f"(members: {', '.join(check.members or ())})"
             )
-        return run_alias(cfg, check)
+        return run_alias(cfg, check, fail_fast=fail_fast)
+    if fail_fast is not None:
+        raise FailFastNotApplicableError(
+            f"'{check.name}' is a single check, so there is no sequence to "
+            "stop early; fail_fast applies to an alias or to a run of every "
+            "check"
+        )
     return run_one(cfg, check, extra=extra_args)

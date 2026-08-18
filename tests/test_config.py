@@ -361,6 +361,88 @@ def test_check_env_must_be_a_table(tmp_path: Path) -> None:
         )
 
 
+_ATOMIC = '[check.a]\ncommand = "true"\nparser = "generic"\n'
+
+_RUN_INT_DEFAULTS = {
+    "keep": 20,
+    "top": 20,
+    "max_snippet_lines": 12,
+    "log_tail_lines": 40,
+}
+
+
+@pytest.mark.parametrize(
+    "literal",
+    ['"60s"', '"12.5"', "true", "false", "[]", "{ s = 1 }"],
+)
+def test_timeout_rejects_non_numbers(tmp_path: Path, literal: str) -> None:
+    """A mistyped timeout is a ConfigError, not a raw ValueError traceback."""
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            _write(tmp_path, _ATOMIC + f"timeout = {literal}\n"),
+            cwd=tmp_path,
+        )
+    assert str(exc.value) == "[check.a] timeout must be a number"
+
+
+@pytest.mark.parametrize(("literal", "expected"), [("12.5", 12.5), ("60", 60.0)])
+def test_timeout_accepts_int_and_float(
+    tmp_path: Path, literal: str, expected: float
+) -> None:
+    cfg = load_config(
+        _write(tmp_path, _ATOMIC + f"timeout = {literal}\n"), cwd=tmp_path
+    )
+    timeout = cfg.checks["a"].timeout
+    assert timeout == expected
+    assert isinstance(timeout, float)
+
+
+def test_timeout_absent_stays_none(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, _ATOMIC), cwd=tmp_path)
+    assert cfg.checks["a"].timeout is None
+
+
+@pytest.mark.parametrize("key", sorted(_RUN_INT_DEFAULTS))
+@pytest.mark.parametrize("literal", ['"twenty"', '"20"', "true", "false", "1.5", "[]"])
+def test_run_int_settings_reject_non_integers(
+    tmp_path: Path, key: str, literal: str
+) -> None:
+    """A mistyped [run] count is a ConfigError, not a raw ValueError."""
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            _write(tmp_path, f"[run]\n{key} = {literal}\n\n" + _ATOMIC),
+            cwd=tmp_path,
+        )
+    assert str(exc.value) == f"[run].{key} must be an integer"
+
+
+@pytest.mark.parametrize(("key", "default"), sorted(_RUN_INT_DEFAULTS.items()))
+def test_run_int_settings_defaults(tmp_path: Path, key: str, default: int) -> None:
+    cfg = load_config(_write(tmp_path, _ATOMIC), cwd=tmp_path)
+    assert getattr(cfg.run, key) == default
+
+
+@pytest.mark.parametrize("key", sorted(_RUN_INT_DEFAULTS))
+def test_run_int_settings_read_the_configured_key(tmp_path: Path, key: str) -> None:
+    # 7 differs from every default, so reading the wrong key is visible.
+    cfg = load_config(_write(tmp_path, f"[run]\n{key} = 7\n\n" + _ATOMIC), cwd=tmp_path)
+    assert getattr(cfg.run, key) == 7
+
+
+@pytest.mark.parametrize("literal", ['"false"', '"true"', "0", "1", "[]"])
+def test_alias_fail_fast_must_be_a_boolean(tmp_path: Path, literal: str) -> None:
+    """`fail_fast = "false"` used to coerce to True and silence a member."""
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            _write(
+                tmp_path,
+                _ATOMIC + f'[check.g]\nmembers = ["a"]\nfail_fast = {literal}\n',
+            ),
+            cwd=tmp_path,
+        )
+    assert str(exc.value) == "[check.g] fail_fast must be a boolean"
+
+
 def test_ckdn_cwd_env_var_selects_the_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -372,3 +454,33 @@ def test_ckdn_cwd_env_var_selects_the_working_directory(
     assert cfg.cwd == project.resolve()
     # An explicit cwd still wins over the environment.
     assert load_config(path, cwd=tmp_path).cwd == tmp_path.resolve()
+
+
+def test_config_is_looked_up_under_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no explicit path, the config lives under the *resolved* cwd — the
+    explicit one, not whatever the environment or the process says."""
+    project = tmp_path / "project"
+    project.mkdir()
+    path = _write(project, '[check.a]\ncommand = "true"\nparser = "generic"\n')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CKDN_CWD", str(tmp_path))
+    cfg = load_config(cwd=project)
+    assert cfg.config_path == path.resolve()
+    assert cfg.cwd == project.resolve()
+
+
+@pytest.mark.parametrize("literal", ["-5", "0", "-0.5", "nan"])
+def test_timeout_must_be_positive(tmp_path: Path, literal: str) -> None:
+    """A non-positive timeout kills every run instantly with rc 124.
+
+    That reads as a red check when it is a config mistake, so it is refused at
+    load time like any other unusable value.
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            _write(tmp_path, _ATOMIC + f"timeout = {literal}\n"),
+            cwd=tmp_path,
+        )
+    assert str(exc.value) == "[check.a] timeout must be greater than 0"

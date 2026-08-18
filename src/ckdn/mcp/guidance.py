@@ -11,7 +11,7 @@ MCP_SERVER_INSTRUCTIONS = (
     "failures. Use get_evidence only when you need bounded artifact slices. "
     "Never invent shell commands; only configured ckdn.toml checks. "
     "Working directory: every config-using tool accepts optional cwd. "
-    "Resolution order: per-call cwd → CKDN_CWD → ckdn-mcp --cwd → process "
+    "Resolution order: per-call cwd → ckdn-mcp --cwd → CKDN_CWD → process "
     "cwd. Subprocesses and relative runs_dir (.agent-runs) anchor on cwd, "
     "not the config file parent. When ckdn.toml lives outside the project "
     "tree (worktree, temp config, Glass slice), pass cwd as the project "
@@ -22,6 +22,6 @@ MCP_SERVER_INSTRUCTIONS = (
 
 CWD_TOOL_HINT = (
     "Optional cwd: subprocess working directory and anchor for relative "
-    "runs_dir (per-call cwd → CKDN_CWD → ckdn-mcp --cwd → process cwd). "
+    "runs_dir (per-call cwd → ckdn-mcp --cwd → CKDN_CWD → process cwd). "
     "When config is outside the project, pass the project root as cwd."
 )
