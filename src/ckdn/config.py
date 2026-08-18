@@ -293,7 +293,13 @@ def _parse_timeout(name: str, raw: Any) -> float | None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, int | float):
         raise ConfigError(f"[check.{name}] timeout must be a number")
-    return float(raw)
+    seconds = float(raw)
+    # A zero or negative deadline is already expired, so the check would die on
+    # rc 124 the moment it starts -- a red run for what is a config mistake.
+    # `nan` fails this comparison too, which is the intended answer for it.
+    if not seconds > 0:
+        raise ConfigError(f"[check.{name}] timeout must be greater than 0")
+    return seconds
 
 
 def _parse_run_int(run_raw: dict[str, Any], key: str, default: int) -> int:

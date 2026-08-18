@@ -469,3 +469,18 @@ def test_config_is_looked_up_under_the_working_directory(
     cfg = load_config(cwd=project)
     assert cfg.config_path == path.resolve()
     assert cfg.cwd == project.resolve()
+
+
+@pytest.mark.parametrize("literal", ["-5", "0", "-0.5", "nan"])
+def test_timeout_must_be_positive(tmp_path: Path, literal: str) -> None:
+    """A non-positive timeout kills every run instantly with rc 124.
+
+    That reads as a red check when it is a config mistake, so it is refused at
+    load time like any other unusable value.
+    """
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            _write(tmp_path, _ATOMIC + f"timeout = {literal}\n"),
+            cwd=tmp_path,
+        )
+    assert str(exc.value) == "[check.a] timeout must be greater than 0"
