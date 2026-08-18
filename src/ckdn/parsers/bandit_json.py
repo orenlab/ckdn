@@ -218,7 +218,17 @@ class BanditJsonParser:
             bounds.append(sum(counts[axis].values()) - below)
             if not below:
                 uncut = True
-        # No usable axis, or every usable axis was cut: nothing is inferable.
+        if not bounds:
+            # No axis yielded a floor, so nothing justifies discounting any
+            # bucket: the declared total has to match what was parsed. Being
+            # unable to infer a *discount* is not the same as being unable to
+            # *compare* -- filtering cuts ranks, it never makes a report
+            # unreadable, so a gap here is the lost parse the guard exists for.
+            if declared_total != len(findings):
+                _refuse(result, declared_total, len(findings))
+            return
+        # Every usable axis was cut: the marginals cannot reconstruct the joint
+        # count, so nothing is inferable.
         if not uncut:
             _skip(result, declared_total)
             return

@@ -1005,16 +1005,32 @@ def test_bandit_unreadable_results_entries_do_not_hide_the_floor(
     assert result.notes == []
 
 
-def test_bandit_no_usable_axis_skips_cross_check(tmp_path: Path) -> None:
-    """No recognisable rank on either axis: nothing is inferable, so abstain."""
+@pytest.mark.parametrize(
+    ("declared", "parser_ok", "note"),
+    [(4, False, "metrics imply 4 issue(s) but 1 were parsed"), (1, True, None)],
+)
+def test_bandit_no_usable_axis_compares_the_declared_total(
+    tmp_path: Path, declared: int, parser_ok: bool, note: str | None
+) -> None:
+    """No recognisable rank on either axis: no discount is justified.
+
+    Being unable to infer how much filtering removed is not a licence to accept
+    any gap, so the declared total is compared as it stands -- 4 declared
+    against 1 parsed is a lost parse, while counts that agree are trusted.
+    """
     payload = {
         "results": [_bandit_issue("BOGUS", "BOGUS")],
-        "metrics": {"_totals": _bandit_buckets(severity_low=4, confidence_high=4)},
+        "metrics": {
+            "_totals": _bandit_buckets(severity_low=declared, confidence_high=declared)
+        },
     }
     _write_json(tmp_path / "bandit.json", payload)
     result = BanditJsonParser().parse(ctx(tmp_path, rc=1))
-    assert result.parser_ok is True
-    assert result.notes == [_skip_note(4)]
+    assert result.parser_ok is parser_ok
+    if note is None:
+        assert result.notes == []
+    else:
+        assert any(note in n for n in result.notes)
 
 
 def test_bandit_all_zero_metrics_never_trip(tmp_path: Path) -> None:
@@ -1772,3 +1788,19 @@ def test_pyright_missing_general_diagnostics_flips_parser_ok(tmp_path: Path) -> 
     result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log='{"summary": {}}'))
     assert result.parser_ok is False
     assert any("generalDiagnostics" in n for n in result.notes)
+
+
+def test_bandit_unusable_results_entries_still_trip_the_guard(tmp_path: Path) -> None:
+    """`results` is non-empty but nothing in it parses.
+
+    That is a lost parse, not tool-side filtering: the abstention branch exists
+    for a report whose ranks were cut, not for one the parser could not read.
+    """
+    payload = {
+        "results": ["not-a-dict", 42],
+        "metrics": {"_totals": _bandit_buckets(severity_high=2, confidence_high=2)},
+    }
+    _write_json(tmp_path / "bandit.json", payload)
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is False
+    assert any("metrics imply 2 issue(s) but 0 were parsed" in n for n in result.notes)
