@@ -74,16 +74,19 @@ The four integers (`keep`, `top`, `max_snippet_lines`, `log_tail_lines`) are
 strict: a string, a float or a bool is a config error (exit 2), never a silent
 coercion. `keep = 2.5` is a typo, not a request for two — the number you wrote
 is not the number you meant, and ckdn says so instead of guessing. The same
-holds elsewhere — `timeout` takes an integer or a float, and
-`fail_fast` must be a real TOML boolean, so `fail_fast = "false"` is rejected
-rather than read as the truthy string it is.
+holds elsewhere — `timeout` takes an integer or a float **greater than zero**,
+and `fail_fast` must be a real TOML boolean, so `fail_fast = "false"` is
+rejected rather than read as the truthy string it is.
 
 ## Checks
 
 **Atomic** check: `command` + `parser` (required), optional `timeout` in
-seconds — a TOML number, never a string. A timeout yields `rc=124` and status
-`error` specifically, never `fail`: the tool was killed mid-flight, and
-partial evidence is not a verdict.
+seconds — a TOML number greater than zero, never a string. `timeout = 0` is
+refused rather than read as "no limit": a deadline that has already passed
+would kill the check the moment it starts. To run without a limit, leave
+`timeout` out entirely. A timeout yields `rc=124` and status `error`
+specifically, never `fail`: the tool was killed mid-flight, and partial
+evidence is not a verdict.
 
 Most other keys are passed to the parser as options (`fail_under`,
 `score_fail_under`, `fail_levels`, …); `fail_fast` is rejected outright on an
