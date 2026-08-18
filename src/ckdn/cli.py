@@ -187,6 +187,8 @@ def cmd_lock_config(args: argparse.Namespace) -> int:
     # from "this check is red".
     if not target.parent.is_dir():
         return _fail(f"no such directory: {target.parent}")
+    if target.is_dir():
+        return _fail(f"not a file: {target}")
     written = write_config_lock(cfg, target)
     print(f"wrote {written}")
     return 0

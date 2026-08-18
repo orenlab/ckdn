@@ -923,3 +923,20 @@ def test_gate_flag_makes_the_exit_follow_the_baseline_not_the_run(
     assert cli.main([*args, "--gate"]) == 0
     # Without --gate the exit reports execution truth, unchanged.
     assert cli.main(args) == 1
+
+
+def test_lock_config_refuses_a_directory_as_output(tmp_path: Path, capsys: Any) -> None:
+    """`-o` naming an existing directory is a refusal (exit 2), not a traceback.
+
+    The parent exists, so the missing-directory guard lets it through and the
+    write used to raise ``IsADirectoryError`` and exit 1 -- the code that means
+    "this check is red".
+    """
+    cfg_path = _cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n',
+    )
+    target = tmp_path / "out"
+    target.mkdir()
+    assert cli.main(["lock-config", "--config", str(cfg_path), "-o", str(target)]) == 2
+    assert f"not a file: {target}" in capsys.readouterr().err
