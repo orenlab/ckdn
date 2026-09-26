@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Parser fact-extraction tests, including the loud-failure guards."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,9 @@ RUFF_JSON = """\
 """
 
 
-def ctx(run_dir: Path, rc: int, log: str = "", **options: Any) -> ParseContext:
+def ctx(
+    run_dir: Path, rc: int, log: str = "", *, cwd: Path | None = None, **options: Any
+) -> ParseContext:
     return ParseContext(
         run_dir=run_dir,
         log_text=log,
@@ -88,7 +91,19 @@ def ctx(run_dir: Path, rc: int, log: str = "", **options: Any) -> ParseContext:
         options=options,
         top=20,
         max_snippet_lines=12,
+        cwd=cwd,
     )
+
+
+def test_relative_path_only_rewrites_absolute_paths_inside_cwd(tmp_path: Path) -> None:
+    inside = str(tmp_path / "src" / "a.py")
+    outside = str(tmp_path.parent / "b.py")
+    rooted = ctx(tmp_path, rc=0, cwd=tmp_path)
+    assert rooted.relative_path(inside) == "src/a.py"
+    assert rooted.relative_path(outside) == outside
+    assert rooted.relative_path("src/a.py") == "src/a.py"
+    assert rooted.relative_path("?") == "?"
+    assert ctx(tmp_path, rc=0).relative_path(inside) == inside  # no cwd known
 
 
 def test_artifact_path_absolute_not_redoubled(tmp_path: Path) -> None:
@@ -213,6 +228,36 @@ def test_ruff_reads_json_report(tmp_path: Path) -> None:
     assert len(result.findings) == 1
     assert result.findings[0].location == "src/pkg/mod.py:1:8"
     assert result.summary["fixable_count"] == 1
+
+
+def test_ruff_reports_absolute_paths_relative_to_cwd(tmp_path: Path) -> None:
+    """ruff writes absolute filenames; a finding keyed on one would tie every
+    digest, annotation and baseline entry to where the checkout happens to be."""
+    absolute = tmp_path / "src" / "pkg" / "mod.py"
+    report = RUFF_JSON.replace('"src/pkg/mod.py"', json.dumps(str(absolute)))
+    (tmp_path / "ruff.json").write_text(report, encoding="utf-8")
+    finding = RuffJsonParser().parse(ctx(tmp_path, rc=1, cwd=tmp_path)).findings[0]
+    assert finding.location == "src/pkg/mod.py:1:8"
+    assert finding.id == "src/pkg/mod.py:1:8 F401"
+    # the pre-1.3.4 form is kept for old baselines, never written to a digest
+    assert finding.legacy_location == f"{absolute}:1:8"
+    assert "legacy_location" not in finding.to_dict()
+
+
+def test_ruff_keeps_paths_it_cannot_make_relative(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "elsewhere.py"
+    report = RUFF_JSON.replace('"src/pkg/mod.py"', json.dumps(str(outside)))
+    (tmp_path / "ruff.json").write_text(report, encoding="utf-8")
+    finding = RuffJsonParser().parse(ctx(tmp_path, rc=1, cwd=tmp_path)).findings[0]
+    assert finding.location == f"{outside}:1:8"
+    assert finding.legacy_location is None
+
+
+def test_ruff_relative_path_has_no_legacy_form(tmp_path: Path) -> None:
+    (tmp_path / "ruff.json").write_text(RUFF_JSON, encoding="utf-8")
+    finding = RuffJsonParser().parse(ctx(tmp_path, rc=1, cwd=tmp_path)).findings[0]
+    assert finding.location == "src/pkg/mod.py:1:8"
+    assert finding.legacy_location is None
 
 
 def test_ruff_missing_report_flips_parser_ok(tmp_path: Path) -> None:
@@ -415,6 +460,16 @@ def test_pyright_extracts_json_from_noisy_log(tmp_path: Path) -> None:
     assert result.summary["warning_count"] == 1
 
 
+def test_pyright_reports_absolute_paths_relative_to_cwd(tmp_path: Path) -> None:
+    absolute = tmp_path / "src" / "pkg" / "mod.py"
+    log = PYRIGHT_JSON.replace('"src/pkg/mod.py"', json.dumps(str(absolute)))
+    result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log=log, cwd=tmp_path))
+    finding = result.findings[0]
+    assert finding.location == "src/pkg/mod.py:10:5"
+    assert finding.id == "src/pkg/mod.py:10:5 reportGeneralTypeIssues"
+    assert finding.legacy_location == f"{absolute}:10:5"
+
+
 def test_pyright_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:
     bad = PYRIGHT_JSON.replace('"errorCount": 1', '"errorCount": 9')
     result = PyrightJsonParser().parse(ctx(tmp_path, rc=1, log=bad))
@@ -453,6 +508,78 @@ def test_reformat_ruff_dialect(tmp_path: Path) -> None:
     result = ReformatTextParser().parse(ctx(tmp_path, rc=1, log=RUFF_FORMAT_LOG))
     assert result.parser_ok
     assert result.summary["file_count"] == 2
+
+
+# ruff >= 0.16 replaced `Would reformat:` with one diagnostic per file, in
+# whatever `output-format` the project configures. Captured from ruff 0.16.9;
+# broken.py carries a syntax error, which is a diagnostic but not a finding.
+RUFF_016_FULL_LOG = """\
+unformatted: File would be reformatted
+ --> src/a.py:1:2
+  |
+  - x=1
+1 + x = 1
+  |
+
+invalid-syntax: Expected a parameter or the end of the parameter list
+ --> src/broken.py:1:7
+  |
+1 | def f(:
+  |       ^
+
+unformatted: File would be reformatted
+ --> src/sub/b.py:1:3
+  |
+  - y  =  2
+1 + y = 2
+  |
+
+2 files would be reformatted, 1 file already formatted
+"""
+
+RUFF_016_CONCISE_LOG = """\
+src/a.py:1:2: unformatted: File would be reformatted
+src/broken.py:1:7: invalid-syntax: Expected a parameter or the end of the parameter list
+src/sub/b.py:1:3: unformatted: File would be reformatted
+2 files would be reformatted, 1 file already formatted
+"""
+
+RUFF_016_GROUPED_LOG = """\
+src/a.py:
+  1:2 unformatted: File would be reformatted
+
+src/broken.py:
+  1:7 invalid-syntax: Expected a parameter or the end of the parameter list
+
+src/sub/b.py:
+  1:3 unformatted: File would be reformatted
+
+2 files would be reformatted, 1 file already formatted
+"""
+
+
+@pytest.mark.parametrize(
+    "log",
+    [RUFF_016_FULL_LOG, RUFF_016_CONCISE_LOG, RUFF_016_GROUPED_LOG],
+    ids=["full", "concise", "grouped"],
+)
+def test_reformat_reads_ruff_016_output(tmp_path: Path, log: str) -> None:
+    result = ReformatTextParser().parse(ctx(tmp_path, rc=1, log=log))
+    assert result.parser_ok, result.notes
+    assert [f.id for f in result.findings] == ["src/a.py", "src/sub/b.py"]
+    assert reconcile(1, result)[0] == "fail"
+
+
+def test_reformat_full_header_without_a_path_is_not_guessed(tmp_path: Path) -> None:
+    """The path is read only from the line directly under the header; a
+    truncated log is not filled in from anywhere else, and the declared count
+    then refuses the parse."""
+    log = "unformatted: File would be reformatted\n1 file would be reformatted\n"
+    result = ReformatTextParser().parse(ctx(tmp_path, rc=1, log=log))
+    assert result.findings == []
+    assert result.parser_ok is False
+    trailing = "1 file would be reformatted\nunformatted: File would be reformatted"
+    assert ReformatTextParser().parse(ctx(tmp_path, rc=1, log=trailing)).findings == []
 
 
 def test_reformat_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:

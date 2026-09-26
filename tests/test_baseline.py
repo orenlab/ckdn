@@ -24,12 +24,14 @@ from ckdn.baseline import (
     fingerprint,
     gate,
     gate_exit,
+    legacy_fingerprint,
     load,
     save,
 )
 from ckdn.config import Config, load_config
 from ckdn.digest import META_NAME
-from ckdn.parsers.base import Finding, ParseResult
+from ckdn.parsers.base import Finding, ParseContext, ParseResult
+from ckdn.parsers.ruff_json import RuffJsonParser
 from ckdn.runner import LOG_NAME, RunOutcome
 from ckdn.schema import load_schema
 
@@ -43,6 +45,72 @@ def test_fingerprint_ignores_line_and_column_drift() -> None:
     assert fingerprint("ruff", top) != fingerprint("ruff", {**top, "message": "x"})
     assert fingerprint("ruff", top) != fingerprint("ruff", {**top, "kind": "y"})
     assert fingerprint("ruff", top) != fingerprint("mypy", top)
+
+
+def _ruff_finding(checkout: Path) -> Finding:
+    """One ruff finding, parsed the way a run in ``checkout`` parses it: ruff
+    reports the file by its absolute path."""
+    report = [
+        {
+            "code": "F401",
+            "filename": str(checkout / "src" / "mod.py"),
+            "location": {"row": 1, "column": 8},
+            "message": "`os` imported but unused",
+        }
+    ]
+    run_dir = checkout / "run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "ruff.json").write_text(json.dumps(report), encoding="utf-8")
+    parsed = RuffJsonParser().parse(
+        ParseContext(
+            run_dir=run_dir,
+            log_text="",
+            rc=1,
+            options={},
+            top=20,
+            max_snippet_lines=12,
+            cwd=checkout,
+        )
+    )
+    return parsed.findings[0]
+
+
+def test_fingerprint_does_not_depend_on_where_the_checkout_lives(
+    tmp_path: Path,
+) -> None:
+    """A baseline recorded on a laptop must match on the CI runner."""
+    laptop = _ruff_finding(tmp_path / "home" / "dev" / "proj").to_dict()
+    runner = _ruff_finding(tmp_path / "runner" / "work" / "proj").to_dict()
+    assert fingerprint("ruff", laptop) == fingerprint("ruff", runner)
+
+
+def test_legacy_fingerprint_matches_what_1_3_3_recorded(tmp_path: Path) -> None:
+    """Pinned to the literal finding the 1.3.3 ruff parser emitted, not to
+    ``legacy_fingerprint`` itself: this is the compatibility promise."""
+    checkout = tmp_path / "proj"
+    absolute = checkout / "src" / "mod.py"
+    recorded_by_1_3_3 = fingerprint(
+        "ruff",
+        {
+            "id": f"{absolute}:1:8 F401",
+            "kind": "lint_violation",
+            "message": "`os` imported but unused",
+            "location": f"{absolute}:1:8",
+        },
+    )
+    finding = _ruff_finding(checkout)
+    assert legacy_fingerprint("ruff", finding) == recorded_by_1_3_3
+
+
+def test_legacy_fingerprint_is_the_pre_1_3_4_form() -> None:
+    plain = Finding(id="F", kind="k", message="m", location="a.py:5")
+    assert legacy_fingerprint("x", plain) is None
+    moved = Finding(
+        id="F", kind="k", message="m", location="a.py:5", legacy_location="/p/a.py:5"
+    )
+    as_recorded = {**moved.to_dict(), "location": "/p/a.py:5"}
+    assert legacy_fingerprint("x", moved) == fingerprint("x", as_recorded)
+    assert legacy_fingerprint("x", moved) != fingerprint("x", moved.to_dict())
 
 
 def test_load_save_roundtrip(tmp_path: Path) -> None:
@@ -231,6 +299,63 @@ def test_baseline_preserves_execution_truth_and_gates(
     assert second["findings"][0]["baselined"] is True
     # the digest with baseline/gate still conforms to the published schema
     Draft202012Validator(load_schema(DIGEST_SCHEMA)).validate(second)
+
+
+def test_a_baseline_recorded_before_1_3_4_still_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transitional: entries keyed on an absolute path stay accepted, the run
+    says how to migrate, and re-recording writes only the portable form."""
+    cfg = _cfg_with_baseline(tmp_path)
+    finding = Finding(
+        id="F",
+        kind="k",
+        message="m",
+        location="a.py:5",
+        legacy_location=f"{tmp_path}/a.py:5",
+    )
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _finding_parser(finding))
+    _stub_execute(monkeypatch, rc=1)
+    assert cfg.baseline_path is not None
+    legacy = legacy_fingerprint("x", finding)
+    assert legacy is not None
+    save(cfg.baseline_path, {"x": {legacy}})
+
+    result = run_one(cfg, cfg.checks["x"], extra=[])
+    digest = result.digest
+    assert digest["status"] == "fail"  # execution truth untouched
+    assert digest["baseline"] == {"known": 1, "new": 0}
+    assert digest["gate"]["status"] == "pass"
+    assert digest["findings"][0]["baselined"] is True
+    assert any("ckdn baseline x" in note for note in digest["notes"])
+    Draft202012Validator(load_schema(DIGEST_SCHEMA)).validate(digest)
+    # what `ckdn baseline` would record: the portable form only
+    assert result.fingerprints == frozenset({fingerprint("x", finding.to_dict())})
+
+    # once re-recorded, the new form matches and the migration note is gone
+    save(cfg.baseline_path, {"x": set(result.fingerprints)})
+    again = run_one(cfg, cfg.checks["x"], extra=[]).digest
+    assert again["baseline"] == {"known": 1, "new": 0}
+    assert "notes" not in again
+
+
+def test_parsers_see_the_checks_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg_with_baseline(tmp_path)
+    seen: list[Path | None] = []
+
+    class _Spy:
+        name = "fp"
+
+        def parse(self, ctx: ParseContext) -> ParseResult:
+            seen.append(ctx.cwd)
+            return ParseResult()
+
+    monkeypatch.setattr(app_run, "get_parser", lambda _n: _Spy())
+    _stub_execute(monkeypatch, rc=0)
+    run_one(cfg, cfg.checks["x"], extra=[])
+    assert seen == [cfg.cwd]
 
 
 def test_baseline_counts_every_finding_and_survives_an_empty_run(

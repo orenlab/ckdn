@@ -24,6 +24,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from ckdn.parsers.base import Finding
+
 #: Baseline document schema identifier.
 BASELINE_SCHEMA = "ckdn.baseline/1"
 
@@ -61,6 +63,21 @@ def fingerprint(check: str, finding: dict[str, Any]) -> str:
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def legacy_fingerprint(check: str, finding: Finding) -> str | None:
+    """The fingerprint ckdn < 1.3.4 gave ``finding``, when it differs.
+
+    Those versions keyed ruff and pyright findings on the absolute path the
+    tool reported, so a baseline recorded with them only matched in the same
+    checkout. Accepting that form keeps an existing baseline working until it
+    is re-recorded; ``ckdn baseline`` only ever writes :func:`fingerprint`.
+    Transitional: drop this, and ``Finding.legacy_location``, together.
+    """
+    if finding.legacy_location is None:
+        return None
+    legacy = {**finding.to_dict(), "location": finding.legacy_location}
+    return fingerprint(check, legacy)
 
 
 def load(path: Path) -> dict[str, set[str]]:

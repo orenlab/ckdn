@@ -138,6 +138,19 @@ the rest follows from what is left in the hash:
   Twelve identical unused-import messages in one file record as one
   fingerprint, and a finding carrying no `location` is keyed by its kind and
   message across the entire check.
+- **The path is relative to the check's working directory**, so a baseline
+  recorded on a laptop matches on the CI runner. Before 1.3.4, `ruff` and
+  `pyright` findings were keyed on the absolute path those tools report, which
+  tied their entries to one checkout.
+
+### Baselines recorded before 1.3.4
+
+They keep working. A finding that matches only the old, absolute-path form of
+its entry still counts as `known`, and the digest adds a note asking you to run
+`ckdn baseline <check>`: re-recording writes the portable form, after which the
+file works from any checkout. The fallback is transitional and will be removed
+in a future major release. An older ckdn does not read the new form back, so
+upgrade ckdn locally and in CI together.
 
 ## A missing or unreadable baseline file
 
