@@ -33,10 +33,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # No cache here: this job builds what gets published, so it must not
+      # restore anything another workflow could have written. setup-uv's own
+      # `auto` default already skips the cache on `release`; this also covers
+      # a manual dispatch.
       - name: Set up uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.2.0
         with:
-          enable-cache: true
+          enable-cache: false
           python-version: "3.13"
 
       - name: Verify release tag matches project version
