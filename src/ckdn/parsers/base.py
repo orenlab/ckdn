@@ -40,6 +40,10 @@ class Finding:
     message: str
     location: str | None = None
     detail: tuple[str, ...] = ()
+    #: ``location`` as ckdn < 1.3.4 wrote it (an absolute path), set only when
+    #: it differs. Never serialized: it exists so a baseline recorded by an
+    #: older version still recognizes the finding. Remove with that fallback.
+    legacy_location: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -84,11 +88,28 @@ class ParseContext:
     options: Mapping[str, Any]
     top: int
     max_snippet_lines: int
+    #: The check's working directory (resolved). ``None`` outside a real run.
+    cwd: Path | None = None
 
     def artifact(self, key: str, default: str) -> Path:
         """Resolve an artifact path from parser options."""
         raw = str(self.options.get(key, default))
         return artifact_path(self.run_dir, raw)
+
+    def relative_path(self, path: str) -> str:
+        """``path`` relative to :attr:`cwd` when it lies inside it.
+
+        Some tools (ruff, pyright) report absolute paths. A finding keyed on
+        one depends on where the checkout lives, so a baseline recorded on a
+        laptop would not match in CI. A relative path, or one outside ``cwd``,
+        is returned unchanged.
+        """
+        candidate = Path(path)
+        if self.cwd is None or not candidate.is_absolute():
+            return path
+        if not candidate.is_relative_to(self.cwd):
+            return path
+        return candidate.relative_to(self.cwd).as_posix()
 
 
 def resolve_under_run_dir(run_dir: Path, candidate: Path) -> Path:

@@ -9,6 +9,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-09-26
+
+### Fixed
+
+- `reformat` did not understand ruff ≥ 0.16 output, so an unformatted file
+  reported `error` instead of `fail` with its path
+- `ruff` and `pyright` findings carried absolute paths, so a baseline recorded
+  in one checkout did not match in another (a laptop's vs. CI's). Paths are
+  now relative to the check's working directory
+
+### Deprecated
+
+- Baseline entries recorded before 1.3.4 still match, with a note to re-record
+  via `ckdn baseline <check>`; this fallback goes in a future major release
+
 ## [1.3.3] - 2026-09-26
 
 Maintenance release. No behaviour changes.
@@ -254,7 +269,8 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/orenlab/ckdn/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/orenlab/ckdn/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/orenlab/ckdn/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/orenlab/ckdn/compare/v1.3.0...v1.3.1

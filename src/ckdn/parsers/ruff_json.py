@@ -17,6 +17,10 @@ import json
 from ckdn.parsers.base import Finding, ParseContext, ParseResult
 
 
+def _location(filename: str, row: object, col: object) -> str:
+    return f"{filename}:{row}:{col}" if row is not None else filename
+
+
 class RuffJsonParser:
     name = "ruff"
 
@@ -52,10 +56,12 @@ class RuffJsonParser:
             if not isinstance(item, dict):
                 continue
             code = str(item.get("code") or "?")
+            # ruff reports absolute paths; findings carry the cwd-relative one.
             filename = str(item.get("filename") or "?")
             loc = item.get("location") or {}
             row, col = loc.get("row"), loc.get("column")
-            location = f"{filename}:{row}:{col}" if row is not None else filename
+            location = _location(ctx.relative_path(filename), row, col)
+            legacy = _location(filename, row, col)
             by_code[code] = by_code.get(code, 0) + 1
             if item.get("fix"):
                 fixable += 1
@@ -65,6 +71,7 @@ class RuffJsonParser:
                     kind="lint_violation",
                     message=str(item.get("message") or "")[:400],
                     location=location,
+                    legacy_location=legacy if legacy != location else None,
                 )
             )
 

@@ -14,13 +14,18 @@ Prefer machine-readable artifacts over terminal text.
 | `ty`         | terminal text                          | — (drift guards)                                                                                                                                                                       |
 | `mypy`       | text, or NDJSON with `format = "json"` | `--output json` (mypy ≥ 1.11) for NDJSON                                                                                                                                               |
 | `pyright`    | JSON in log                            | `--outputjson`                                                                                                                                                                         |
-| `reformat`   | black / ruff-format text               | `--check` (no `--diff`)                                                                                                                                                                |
+| `reformat`   | black / ruff-format text               | `--check` (no `--diff`). ruff ≥ 0.16 is read in its `full` (default), `concise` and `grouped` output formats, older ruff and black in theirs                                            |
 | `pip_audit`  | JSON file                              | `--progress-spinner off -f json -o {run_dir}/pip-audit.json`; set a `timeout` (network tool). Skipped packages are a note, not a failure, and findings carry no `location`              |
 | `bandit`     | JSON file                              | `-f json -o {run_dir}/bandit.json`                                                                                                                                                     |
 | `pylint`     | json2 (pylint ≥ 3.0)                   | `--output-format=json2:{run_dir}/pylint.json` — every message class except `info` becomes a finding, refactor and convention included; narrow it in pylint's own config, not in ckdn    |
 | `sarif`      | SARIF file                             | whatever flag writes SARIF to `{run_dir}/report.sarif` (semgrep `--sarif-output` **plus `--error`**, gitleaks `--report-format sarif --report-path`, trivy `--format sarif -o` **plus `--exit-code 1`**) |
 | `pre_commit` | `pre-commit run` terminal text         | `pre-commit run` (use `--all-files` for full-repo parity); per-hook findings on failure                                                                                                |
 | `generic`    | exit code only                         | — no findings by construction, so `rc ≠ 0` reconciles to `fail` with the log tail attached, never to `error`                                                                            |
+
+**Paths.** `ruff` and `pyright` report absolute paths; their findings carry
+the path relative to the check's working directory, so digests, annotations and
+[baseline](baselines.md) fingerprints do not depend on where the checkout
+lives. A path outside that directory is kept as reported.
 
 **Severity mapping.** `ty`, `mypy` and `pyright` emit findings for **errors
 only**; warnings are counted in `summary.warning_count` and never become
@@ -92,7 +97,9 @@ class MyToolParser:
 ```
 
 Rules: prefer `{run_dir}` artifacts (`ctx.artifact()` refuses any path that
-escapes the run directory); if parsing text, add a self-consistency guard;
+escapes the run directory); pass tool-reported paths through
+`ctx.relative_path()` so findings stay relative to the check's working
+directory (`ctx.cwd`); if parsing text, add a self-consistency guard;
 findings = failure evidence only; bound everything; return `parser_ok=False`
 instead of raising on bad output — a parser that raises anyway is caught and
 recorded as `parser_ok=false` with a `crashed` note, never as a lost run.

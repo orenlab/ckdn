@@ -98,20 +98,34 @@ def _annotate_baseline(
         return frozenset()
     accepted = loaded.get(check_name, set())
     seen: set[str] = set()
+    via_legacy: set[str] = set()
     new = 0
     known = 0
+    legacy = 0
     for finding in result.findings:
         fingerprint = baseline.fingerprint(check_name, finding.to_dict())
         seen.add(fingerprint)
         if fingerprint in accepted:
             known += 1
+        elif baseline.legacy_fingerprint(check_name, finding) in accepted:
+            known += 1
+            legacy += 1
+            via_legacy.add(fingerprint)
         else:
             new += 1
     for shown in digest.get("findings", []):
-        if baseline.fingerprint(check_name, shown) in accepted:
+        shown_fp = baseline.fingerprint(check_name, shown)
+        if shown_fp in accepted or shown_fp in via_legacy:
             shown["baselined"] = True
     if known or new:
         digest["baseline"] = {"known": known, "new": new}
+    if legacy:
+        digest.setdefault("notes", []).append(
+            f"{legacy} baselined finding(s) matched only an entry "
+            "recorded with absolute paths (ckdn < 1.3.4); re-record with "
+            f"`ckdn baseline {check_name}` so the baseline works from any "
+            "checkout"
+        )
     digest["gate"] = baseline.gate(
         execution_status,
         result.parser_ok,
@@ -300,6 +314,7 @@ def _run_atomic(
                     options=check.options,
                     top=int(check.options.get("top", cfg.run.top)),
                     max_snippet_lines=cfg.run.max_snippet_lines,
+                    cwd=cfg.cwd,
                 )
             )
         except KeyboardInterrupt:

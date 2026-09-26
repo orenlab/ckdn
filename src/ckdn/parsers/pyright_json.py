@@ -37,8 +37,7 @@ def _extract_json_object(text: str) -> Any | None:
         return None
 
 
-def _diagnostic_location(item: dict[str, Any]) -> str:
-    file_path = str(item.get("file") or "?")
+def _diagnostic_location(item: dict[str, Any], file_path: str) -> str:
     rng = item.get("range") or {}
     start = rng.get("start") if isinstance(rng, dict) else {}
     if not isinstance(start, dict):
@@ -51,8 +50,11 @@ def _diagnostic_location(item: dict[str, Any]) -> str:
     return file_path
 
 
-def _error_finding(item: dict[str, Any]) -> Finding:
-    location = _diagnostic_location(item)
+def _error_finding(item: dict[str, Any], ctx: ParseContext) -> Finding:
+    # pyright reports absolute paths; findings carry the cwd-relative one.
+    file_path = str(item.get("file") or "?")
+    location = _diagnostic_location(item, ctx.relative_path(file_path))
+    legacy = _diagnostic_location(item, file_path)
     rule = str(item.get("rule") or "")
     finding_id = f"{location} {rule}".strip() if rule else location
     return Finding(
@@ -60,11 +62,13 @@ def _error_finding(item: dict[str, Any]) -> Finding:
         kind="type_error",
         message=str(item.get("message") or "")[:400],
         location=location,
+        legacy_location=legacy if legacy != location else None,
     )
 
 
 def _ingest_diagnostics(
     diagnostics: list[Any],
+    ctx: ParseContext,
 ) -> tuple[list[Finding], int, int]:
     findings: list[Finding] = []
     error_count = 0
@@ -77,7 +81,7 @@ def _ingest_diagnostics(
             warning_count += 1
         elif severity == "error":
             error_count += 1
-            findings.append(_error_finding(item))
+            findings.append(_error_finding(item, ctx))
     return findings, error_count, warning_count
 
 
@@ -110,7 +114,7 @@ class PyrightJsonParser:
         raw_summary = data.get("summary")
         summary: dict[str, Any] = raw_summary if isinstance(raw_summary, dict) else {}
 
-        findings, error_count, warning_count = _ingest_diagnostics(diagnostics)
+        findings, error_count, warning_count = _ingest_diagnostics(diagnostics, ctx)
         result = ParseResult(
             findings=findings,
             summary={
