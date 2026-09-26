@@ -9,6 +9,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-09-26
+
+Maintenance release. No behaviour changes.
+
+### Changed
+
+- Dependencies refreshed; dev floors raised to `ruff>=0.16.9`, `ty>=0.0.84`
+- CI moved to `astral-sh/setup-uv` v10.2.0; the release build no longer
+  restores a cache
+- `ckdn[mcp]` confirmed working with fastmcp 4 / mcp 2, which a fresh install
+  now resolves; the `fastmcp>=3.4.7` range is unchanged
+
 ## [1.3.2] - 2026-08-18
 
 Correctness release: fifteen defects found by auditing the documentation against
@@ -242,7 +254,8 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/orenlab/ckdn/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/orenlab/ckdn/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/orenlab/ckdn/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/orenlab/ckdn/compare/v1.2.0...v1.3.0

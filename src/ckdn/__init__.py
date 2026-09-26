@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """ckdn: deterministic check runner and log digester for AI-assisted development."""
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 #: Digest document schema identifier. Bump the trailing integer on any
 #: backward-incompatible change to the digest.json structure.
