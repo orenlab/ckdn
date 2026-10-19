@@ -8,7 +8,7 @@ import contextlib
 import json
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -973,7 +973,7 @@ def test_a_lock_conflict_is_an_app_error_not_a_runtime_error(
     cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
 
     @contextlib.contextmanager
-    def _busy(runs_dir: Path, check: str) -> Iterator[str]:
+    def _busy(runs_dir: Path, check: str) -> Generator[str, None, None]:
         raise RunLockError(f"check '{check}' is already running")
         yield ""  # pragma: no cover - unreachable, keeps this a generator
 
