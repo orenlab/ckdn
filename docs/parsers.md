@@ -27,10 +27,12 @@ the path relative to the check's working directory, so digests, annotations and
 [baseline](baselines.md) fingerprints do not depend on where the checkout
 lives. A path outside that directory is kept as reported.
 
-**Severity mapping.** `ty`, `mypy` and `pyright` emit findings for **errors
-only**; warnings are counted in `summary.warning_count` and never become
-findings, because those tools exit 0 on warnings and a finding with `rc == 0`
-reads as `parse_mismatch`. `mypy` `note:` lines fold into the preceding error's
+**Severity mapping.** `ty`, `mypy` and `pyright` emit findings for **errors**;
+warnings are counted in `summary.warning_count`, because a finding with
+`rc == 0` reads as `parse_mismatch` and `pyright` exits 0 on warnings. `ty` is
+the exception: it exits 1 on warnings alone, so when a `ty` run fails with no
+errors its warnings become the findings (`kind: "type_warning"`); with
+`--exit-zero` they stay in the summary. `mypy` `note:` lines fold into the preceding error's
 `detail`, and are dropped when no error precedes them. `bandit`, `pip_audit`
 and `pylint` (every class but `info`) emit each reported item as a finding.
 

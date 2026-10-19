@@ -15,9 +15,12 @@ Either way the result is never silently green. Supported layouts: the
 default block format (``error[code]: message`` + ``--> path:line:col``) and
 the concise one-line format.
 
-Warnings are counted in the summary but are NOT emitted as findings:
-ty exits 0 when only warnings are present, and warning-findings with rc == 0
-would trip the reconciler's mismatch guard by design.
+Errors are the findings. Warnings are counted in the summary, and become
+findings only when they are why ty failed: ty exits 1 on warnings alone
+(every release checked, 0.0.72 through 0.0.89), so a nonzero exit with no
+errors is reported as ``type_warning`` findings instead of an unexplained
+failure. With ``--exit-zero`` (rc 0) they stay summary-only, as before —
+a finding next to a green exit would trip the reconciler's mismatch guard.
 """
 
 from __future__ import annotations
@@ -41,8 +44,9 @@ _CLEAN_RE = re.compile(r"All checks passed")
 
 @dataclass
 class _Diagnostic:
-    """One parsed ty error diagnostic (warnings are counted, not collected)."""
+    """One parsed ty diagnostic."""
 
+    level: str
     code: str
     message: str
     location: str | None = None
@@ -55,7 +59,6 @@ class _Scanner:
     def __init__(self, max_snippet_lines: int) -> None:
         self._max = max_snippet_lines
         self.diagnostics: list[_Diagnostic] = []
-        self.warning_count = 0
         self._current: _Diagnostic | None = None
         self._context: list[str] = []
 
@@ -83,19 +86,16 @@ class _Scanner:
         if match is None:
             return False
         self._flush()
-        if match.group("level") == "warning":
-            self.warning_count += 1
-        else:
-            self.diagnostics.append(
-                _Diagnostic(
-                    code=match.group("code"),
-                    message=match.group("message").strip(),
-                    location=(
-                        f"{match.group('path')}:"
-                        f"{match.group('line')}:{match.group('col')}"
-                    ),
-                )
+        self.diagnostics.append(
+            _Diagnostic(
+                level=match.group("level"),
+                code=match.group("code"),
+                message=match.group("message").strip(),
+                location=(
+                    f"{match.group('path')}:{match.group('line')}:{match.group('col')}"
+                ),
             )
+        )
         return True
 
     def _feed_header(self, line: str) -> bool:
@@ -103,13 +103,11 @@ class _Scanner:
         if match is None:
             return False
         self._flush()
-        if match.group("level") == "warning":
-            self.warning_count += 1
-        else:
-            self._current = _Diagnostic(
-                code=match.group("code"),
-                message=match.group("message").strip(),
-            )
+        self._current = _Diagnostic(
+            level=match.group("level"),
+            code=match.group("code"),
+            message=match.group("message").strip(),
+        )
         return True
 
     def _feed_context(self, line: str) -> None:
@@ -133,31 +131,38 @@ class TyTextParser:
             scanner.feed(raw.rstrip())
         scanner.finish()
 
-        diagnostics = scanner.diagnostics
+        errors = [d for d in scanner.diagnostics if d.level == "error"]
+        warnings = [d for d in scanner.diagnostics if d.level == "warning"]
+        # A failed run with no errors failed on its warnings: they are the
+        # evidence. Otherwise only errors are findings (see module docstring).
+        if ctx.rc != 0 and not errors:
+            reported, kind = warnings, "type_warning"
+        else:
+            reported, kind = errors, "type_error"
         findings = [
             Finding(
                 id=f"{diag.location or '?'} {diag.code}",
-                kind="type_error",
+                kind=kind,
                 message=diag.message[:400],
                 location=diag.location,
                 detail=tuple(diag.detail),
             )
-            for diag in diagnostics
+            for diag in reported
         ]
 
         by_code: dict[str, int] = {}
-        for diag in diagnostics:
+        for diag in errors:
             by_code[diag.code] = by_code.get(diag.code, 0) + 1
 
         result = ParseResult(
             findings=findings,
             summary={
-                "error_count": len(findings),
-                "warning_count": scanner.warning_count,
+                "error_count": len(errors),
+                "warning_count": len(warnings),
                 "errors_by_code": dict(sorted(by_code.items())),
             },
         )
-        self._verify(ctx, result, findings, scanner.warning_count)
+        self._verify(ctx, result, findings, len(scanner.diagnostics))
         return result
 
     @staticmethod
@@ -165,12 +170,11 @@ class TyTextParser:
         ctx: ParseContext,
         result: ParseResult,
         findings: list[Finding],
-        warning_count: int,
+        parsed_total: int,
     ) -> None:
         """Apply the two loud-failure guards to a provisional result."""
         declared_match = _FOUND_RE.search(ctx.log_text)
         declared = int(declared_match.group("n")) if declared_match else None
-        parsed_total = len(findings) + warning_count
         if declared is not None and declared != parsed_total:
             result.parser_ok = False
             result.notes.append(

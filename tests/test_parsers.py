@@ -1719,11 +1719,12 @@ def test_ty_parses_concise_format(tmp_path: Path) -> None:
     assert len(result.findings) == 1
     assert result.findings[0].location == "src/pkg/mod.py:10:5"
     assert result.findings[0].id == "src/pkg/mod.py:10:5 invalid-assignment"
-    # Warnings are counted, never collected: ty exits 0 on warnings alone.
+    # Errors present: they are the findings, the warning stays in the summary.
     assert result.summary["warning_count"] == 1
 
 
 def test_ty_block_warning_is_counted_not_collected(tmp_path: Path) -> None:
+    """rc 0 (`--exit-zero`): ty reports success, so warnings stay summary-only."""
     log = (
         "warning[unused-ignore]: Unused ignore\n --> src/a.py:1:1\nFound 1 diagnostic\n"
     )
@@ -1731,6 +1732,84 @@ def test_ty_block_warning_is_counted_not_collected(tmp_path: Path) -> None:
     assert result.parser_ok
     assert result.findings == []
     assert result.summary["warning_count"] == 1
+
+
+# Captured from ty 0.0.89 (0.0.72 and 0.0.84 print the same): ty exits 1 on
+# warnings alone, so these runs fail with nothing at error level.
+TY_WARNING_ONLY_BLOCK = """\
+warning[invalid-assignment]: Object of type `Literal["a"]` is not assignable to `int`
+ --> a.py:1:10
+  |
+1 | x: int = "a"
+  |    ---   ^^^ Incompatible value of type `Literal["a"]`
+  |    |
+  |    Declared type
+
+Found 1 diagnostic
+"""
+
+TY_WARNING_ONLY_CONCISE = (
+    "a.py:1:10: warning[invalid-assignment] "
+    'Object of type `Literal["a"]` is not assignable to `int`\n'
+    "Found 1 diagnostic\n"
+)
+
+TY_ERROR_AND_WARNING = """\
+warning[invalid-assignment]: Object of type `Literal["a"]` is not assignable to `int`
+ --> mix.py:1:10
+  |
+1 | x: int = "a"
+  |    ---   ^^^ Incompatible value of type `Literal["a"]`
+  |    |
+  |    Declared type
+
+error[invalid-return-type]: Return type does not match returned value
+ --> mix.py:5:12
+  |
+4 | def f() -> str:
+  |            --- Expected `str` because of return type
+5 |     return 1
+  |            ^ expected `str`, found `Literal[1]`
+
+Found 2 diagnostics
+"""
+
+
+@pytest.mark.parametrize(
+    "log", [TY_WARNING_ONLY_BLOCK, TY_WARNING_ONLY_CONCISE], ids=["block", "concise"]
+)
+def test_ty_warnings_that_fail_the_run_are_the_findings(
+    tmp_path: Path, log: str
+) -> None:
+    """Before 1.3.5 this read as "exited nonzero but no diagnostics were
+    parsed" and reconciled to `error`, though the warning was parsed."""
+    result = TyTextParser().parse(ctx(tmp_path, rc=1, log=log))
+    assert result.parser_ok, result.notes
+    assert [f.id for f in result.findings] == ["a.py:1:10 invalid-assignment"]
+    assert result.findings[0].kind == "type_warning"
+    assert result.summary["error_count"] == 0
+    assert result.summary["warning_count"] == 1
+    assert reconcile(1, result)[0] == "fail"
+
+
+def test_ty_warnings_stay_summary_only_under_exit_zero(tmp_path: Path) -> None:
+    result = TyTextParser().parse(ctx(tmp_path, rc=0, log=TY_WARNING_ONLY_BLOCK))
+    assert result.parser_ok
+    assert result.findings == []
+    assert reconcile(0, result)[0] == "pass"
+
+
+def test_ty_errors_outrank_warnings(tmp_path: Path) -> None:
+    result = TyTextParser().parse(ctx(tmp_path, rc=1, log=TY_ERROR_AND_WARNING))
+    assert result.parser_ok
+    assert [f.id for f in result.findings] == ["mix.py:5:12 invalid-return-type"]
+    assert result.findings[0].kind == "type_error"
+    assert result.findings[0].detail  # the code frame travels with the error
+    assert result.summary == {
+        "error_count": 1,
+        "warning_count": 1,
+        "errors_by_code": {"invalid-return-type": 1},
+    }
 
 
 def test_ruff_skips_non_dict_entries(tmp_path: Path) -> None:
