@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Runs every built-in parser against real tool output (scripts/parser_lab.py).
+# Separate from CI: it installs a dozen tools per toolset and only matters when
+# a parser changes, a tool ships a new release (the weekly run), or a release
+# is about to be cut (run it by hand). No secrets: public packages in, a
+# verdict out.
+name: Parser lab
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/ckdn/parsers/**"
+      - "src/ckdn/reconcile.py"
+      - "scripts/parser_lab.*"
+      - ".github/workflows/parser-lab.yml"
+  schedule:
+    # Mondays: `latest` resolves fresh releases, so a changed output format
+    # turns this red before a user's digest goes wrong.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        toolset: [latest, previous, oldest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # No cache: `latest` must resolve today's releases, not last week's.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: false
+          python-version: "3.13"
+      - name: Run the lab
+        env:
+          TOOLSET: ${{ matrix.toolset }}
+        run: uv run --no-project python scripts/parser_lab.py "$TOOLSET"

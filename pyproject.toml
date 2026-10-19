@@ -104,7 +104,7 @@ warn_return_any = true
 disallow_any_generics = true
 disallow_untyped_defs = true
 no_implicit_optional = true
-files = ["src/ckdn", "tests"]
+files = ["src/ckdn", "tests", "scripts"]
 exclude = [
     "^build/",
     "^site/",

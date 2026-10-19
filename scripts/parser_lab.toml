@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Den Rozhnovskiy <rozhnovskiydenis@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Tool releases scripts/parser_lab.py runs every built-in parser against.
+#
+# `latest` is unpinned on purpose: run on a schedule, it is the early warning
+# that a tool changed its output before a user finds out. `previous` and
+# `oldest` are pinned so a fix for a new format never breaks an old one;
+# `oldest` holds the floors the parser docs promise (mypy NDJSON needs 1.11,
+# pylint json2 needs 3.0) and ruff from before its 0.16 `format` output.
+
+[latest]
+python = "3.13"
+tools = [
+    "pytest", "pytest-cov", "coverage", "ruff", "ty", "mypy", "pyright",
+    "black", "pylint", "bandit[sarif]", "pip-audit", "pre-commit",
+]
+
+[previous]
+python = "3.13"
+tools = [
+    "pytest==8.4.2", "pytest-cov==6.3.0", "coverage==7.10.7", "ruff==0.16.9",
+    "ty==0.0.84", "mypy==1.20.2", "pyright==1.1.409", "black==25.12.0",
+    "pylint==3.3.9", "bandit[sarif]==1.8.6", "pip-audit==2.9.0",
+    "pre-commit==4.5.1",
+]
+
+[oldest]
+python = "3.12"
+tools = [
+    "pytest==7.4.4", "pytest-cov==4.1.0", "coverage==7.4.4", "ruff==0.15.22",
+    "ty==0.0.72", "mypy==1.11.2", "pyright==1.1.380", "black==24.10.0",
+    "pylint==3.0.4", "bandit[sarif]==1.7.10", "pip-audit==2.7.3",
+    "pre-commit==3.8.0",
+]
