@@ -9,6 +9,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.5] - 2026-10-19
+
+### Fixed
+
+- A `ty` run that failed on warnings alone (ty exits 1 on them) reported
+  `error`; those warnings are now its findings (`type_warning`), and the run
+  is `fail`. With `--exit-zero` they stay in the summary
+
+### Changed
+
+- Dependencies refreshed (ruff 0.17, ty 0.0.89, mypy 2.4); every parser
+  re-verified against current and older releases of its tool
+- Floors raised: `fastmcp>=3.4.9`, `mypy>=2.4.0`, `ruff>=0.17.1`,
+  `ty>=0.0.89`, `pre-commit>=4.7.0`
+
 ## [1.3.4] - 2026-09-26
 
 ### Fixed
@@ -269,7 +284,8 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.4...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.5...HEAD
+[1.3.5]: https://github.com/orenlab/ckdn/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/orenlab/ckdn/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/orenlab/ckdn/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/orenlab/ckdn/compare/v1.3.1...v1.3.2

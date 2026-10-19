@@ -34,7 +34,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -232,7 +232,7 @@ def _stale_lock_note(holder: str) -> str:
 
 
 @contextlib.contextmanager
-def run_lock(runs_dir: Path, check: str) -> Iterator[str | None]:
+def run_lock(runs_dir: Path, check: str) -> Generator[str | None, None, None]:
     """Hold an exclusive lock for ``check``; refuse a second concurrent run.
 
     Two runs of the same check in one workspace fight over the same tools and

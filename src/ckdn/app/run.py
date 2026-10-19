@@ -8,7 +8,7 @@ import contextlib
 import dataclasses
 import datetime as dt
 import signal
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -137,7 +137,7 @@ def _annotate_baseline(
 
 
 @contextlib.contextmanager
-def _sigint_held() -> Iterator[None]:
+def _sigint_held() -> Generator[None, None, None]:
     """Hold off Ctrl-C for a moment; a worker thread simply cannot."""
     try:
         previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
