@@ -13,16 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A `ty` run that failed on warnings alone (ty exits 1 on them) reported
-  `error`; those warnings are now its findings (`type_warning`), and the run
-  is `fail`. With `--exit-zero` they stay in the summary
+- `ty` failing on warnings alone reported `error`; the warnings are now its
+  findings (`type_warning`) and the run is `fail`
 
 ### Changed
 
-- Dependencies refreshed (ruff 0.17, ty 0.0.89, mypy 2.4); every parser
-  re-verified against current and older releases of its tool
-- Floors raised: `fastmcp>=3.4.9`, `mypy>=2.4.0`, `ruff>=0.17.1`,
-  `ty>=0.0.89`, `pre-commit>=4.7.0`
+- Dependencies refreshed (ruff 0.17, ty 0.0.89, mypy 2.4); the `mcp` extra
+  needs `fastmcp>=3.4.9`. Every parser re-checked against current and older
+  tool releases
 
 ## [1.3.4] - 2026-09-26
 
