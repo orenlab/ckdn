@@ -27,6 +27,16 @@ regenerated lock with the config change.
 ckdn checks itself: `uv run ckdn run --all` drives the same tools through the
 config in `ckdn.toml` and prints one aggregate digest.
 
+## Parser lab
+
+Unit tests pin parsers to captured output; tools keep changing theirs.
+`python scripts/parser_lab.py latest` (or `previous`, `oldest`; needs `uv`)
+runs every built-in parser against the real tools from
+`scripts/parser_lab.toml` and fails when a digest disagrees with what the tool
+reported. The `Parser lab` workflow runs all three on parser changes, weekly,
+and by hand — run it before a release. A new format gets fixed for both
+generations, with the captured output as a unit test.
+
 Core package stays **stdlib only** (`dependencies = []`). The MCP server is the optional
 `mcp` extra (`fastmcp`); sync it for MCP tests and local `ckdn-mcp`.
 
