@@ -101,6 +101,7 @@ STARTER_CONFIG = (
     'command = "uv run pre-commit run --all-files"\n'
     'parser = "pre_commit"\n'
     "timeout = 600\n"
+    "# allow_all_skipped = true  # accept a run in which every hook was skipped\n"
     "# # pre-push stage: add --hook-stage pre-push\n"
     "# # single hook: uv run pre-commit run <hook-id> --all-files\n"
     "\n"
@@ -132,6 +133,9 @@ STARTER_CONFIG = (
     "# timeout = 120\n"
     "# top = 20\n"
     '# report = "pip-audit.json"\n'
+    "# # packages pip-audit cannot audit (e.g. your own, not on PyPI) fail the\n"
+    "# # check unless accepted here:\n"
+    '# allow_skipped = ["your-project"]\n'
     "\n"
     "# [check.bandit]\n"
     '# command = "uv run bandit -r src -f json '
@@ -366,6 +370,11 @@ def _parse_check(name: str, raw: dict[str, Any]) -> CheckConfig:
     # long before this point.
     timeout = _parse_timeout(name, raw.get("timeout"))
     env = _parse_check_env(name, raw.get("env"))
+    # Read by ckdn itself, after the run directory exists -- a bad value used
+    # to crash the run there and leave a directory with no digest.
+    top = raw.get("top", 0)
+    if isinstance(top, bool) or not isinstance(top, int):
+        raise ConfigError(f"[check.{name}] top must be an integer")
     options = {k: v for k, v in raw.items() if k not in _ATOMIC_RESERVED}
     return CheckConfig(
         name=name,
@@ -389,6 +398,17 @@ def _parse_check_env(name: str, raw: Any) -> dict[str, str]:
             raise ConfigError(f"[check.{name}].env.{key} must be a string")
         env[str(key)] = value
     return env
+
+
+def _validate_check_name(name: str) -> None:
+    """A check name becomes part of a directory name; it must be one segment."""
+    if not name.strip():
+        raise ConfigError("check names must not be empty")
+    if any(c in name for c in "/\\") or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ConfigError(
+            f"[check.{name!r}] name must not contain a path separator or a "
+            "control character"
+        )
 
 
 def _validate_aliases(checks: dict[str, CheckConfig]) -> None:
@@ -480,6 +500,7 @@ def load_config(path: Path | None = None, *, cwd: Path | None = None) -> Config:
 
     checks: dict[str, CheckConfig] = {}
     for name, raw in checks_raw.items():
+        _validate_check_name(name)
         if not isinstance(raw, dict):
             raise ConfigError(f"[check.{name}] must be a table")
         checks[name] = _parse_check(name, raw)

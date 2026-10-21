@@ -8,10 +8,16 @@ Expected command shape:
 
 Network tool: set ``timeout`` on the check; offline runs land in ``error``,
 which is correct.
+
+A package pip-audit could not audit (not on PyPI -- typically the project
+itself -- or skipped as editable) is unverified, not clean, and fails the
+gate. Option ``allow_skipped``: ``true``, or a list of the package names
+whose absence from the audit is accepted.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ckdn.parsers.base import (
@@ -66,6 +72,68 @@ def _collect_findings(
     return findings, packages_with_vulns
 
 
+def _canonical_name(name: str) -> str:
+    """PEP 503 normalization, the spelling pip-audit itself reports."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _skipped(root: dict[str, Any], dependencies: list[Any]) -> list[tuple[str, str]]:
+    """``(name, reason)`` for every package pip-audit could not audit.
+
+    pip-audit lists them inside ``dependencies``, with a ``skip_reason`` and
+    no ``vulns``. A top-level ``skipped`` array is read too: it is the shape
+    this parser used to look for, and real reports never carry it -- which
+    is how unaudited packages went unmentioned.
+    """
+    out = [
+        (str(dep.get("name") or "?"), str(dep.get("skip_reason") or ""))
+        for dep in dependencies
+        if isinstance(dep, dict) and "skip_reason" in dep
+    ]
+    legacy = root.get("skipped")
+    for item in legacy if isinstance(legacy, list) else []:
+        if isinstance(item, dict):
+            out.append(
+                (str(item.get("name") or "?"), str(item.get("skip_reason") or ""))
+            )
+        else:
+            out.append((str(item), ""))
+    return out
+
+
+def _apply_skip_gate(
+    ctx: ParseContext, result: ParseResult, skipped: list[tuple[str, str]]
+) -> None:
+    if not skipped:
+        return
+    allow = ctx.options.get("allow_skipped", False)
+    if isinstance(allow, bool):
+        accepted = {name for name, _ in skipped} if allow else set()
+    elif isinstance(allow, list) and all(isinstance(n, str) for n in allow):
+        wanted = {_canonical_name(n) for n in allow}
+        accepted = {name for name, _ in skipped if _canonical_name(name) in wanted}
+    else:
+        result.parser_ok = False
+        result.notes.append("`allow_skipped` must be true or a list of package names")
+        return
+    refused = [(name, why) for name, why in skipped if name not in accepted]
+    if accepted:
+        result.notes.append(
+            f"{len(skipped) - len(refused)} package(s) not audited, accepted by "
+            "allow_skipped: " + ", ".join(sorted(accepted))
+        )
+    if not refused:
+        return
+    shown = refused[: max(ctx.top, 1)]
+    result.gate_failures.append(
+        f"pip-audit could not audit {len(refused)} package(s): "
+        + ", ".join(name for name, _ in shown)
+        + (" …" if len(refused) > len(shown) else "")
+        + "; unaudited is not clean (accept known ones with `allow_skipped`)"
+    )
+    result.notes.extend(f"{name}: {why}" for name, why in shown if why)
+
+
 class PipAuditJsonParser:
     name = "pip_audit"
 
@@ -94,19 +162,14 @@ class PipAuditJsonParser:
         findings, packages_with_vulns = _collect_findings(
             dependencies, ctx.max_snippet_lines
         )
-        skipped = root.get("skipped") or []
-        skipped_count = len(skipped) if isinstance(skipped, list) else 0
+        skipped = _skipped(root, dependencies)
         result = ParseResult(
             findings=findings,
             summary={
                 "vulnerable_packages": len(packages_with_vulns),
                 "total_vulnerabilities": len(findings),
-                "skipped_packages": skipped_count,
+                "skipped_packages": len(skipped),
             },
         )
-        if skipped_count > 0:
-            result.notes.append(
-                f"{skipped_count} package(s) were skipped by pip-audit "
-                "(unverified, not clean)"
-            )
+        _apply_skip_gate(ctx, result, skipped)
         return result

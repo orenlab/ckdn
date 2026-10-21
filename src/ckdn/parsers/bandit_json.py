@@ -9,6 +9,10 @@ Expected command shape:
 Severity filtering is done TOOL-SIDE (``--severity-level``), never here —
 hiding findings the exit code knows about would manufacture a parse_mismatch.
 
+A file bandit could not scan (``errors``: typically a syntax error) is
+unverified, not clean, and fails the gate even though bandit exits 0. Exclude
+files deliberately tool-side (``-x``).
+
 The metrics cross-check has to know that, though. Verified against bandit
 1.9.4: ``--severity-level`` / ``--confidence-level`` filter ``results`` but
 NOT ``metrics`` — both ``_totals`` and the per-file maps keep counting every
@@ -98,6 +102,25 @@ def _skip(result: ParseResult, declared_total: int) -> None:
     )
 
 
+def _apply_scan_errors(ctx: ParseContext, result: ParseResult, raw: Any) -> None:
+    errors = [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+    if not errors:
+        return
+    result.summary["scan_errors"] = len(errors)
+    shown = errors[: max(ctx.top, 1)]
+    result.gate_failures.append(
+        f"bandit could not scan {len(errors)} file(s): "
+        + ", ".join(str(e.get("filename") or "?") for e in shown)
+        + (" …" if len(errors) > len(shown) else "")
+        + "; unscanned is not clean (fix them, or exclude them with `-x`)"
+    )
+    result.notes.extend(
+        f"{e.get('filename') or '?'}: {e.get('reason')}"
+        for e in shown
+        if e.get("reason")
+    )
+
+
 class BanditJsonParser:
     name = "bandit"
 
@@ -165,6 +188,7 @@ class BanditJsonParser:
             },
         )
         self._verify_metrics(result, findings, metrics, results, ctx.rc)
+        _apply_scan_errors(ctx, result, root.get("errors"))
         return result
 
     @staticmethod

@@ -397,6 +397,47 @@ def test_timeout_accepts_int_and_float(
     assert isinstance(timeout, float)
 
 
+@pytest.mark.parametrize("literal", ['"nope"', "1.5", "true"])
+def test_per_check_top_must_be_an_integer(tmp_path: Path, literal: str) -> None:
+    """ckdn reads it after the run directory exists; a bad value crashed the
+    run there and left a directory without a digest."""
+    with pytest.raises(ConfigError) as exc:
+        load_config(_write(tmp_path, _ATOMIC + f"top = {literal}\n"), cwd=tmp_path)
+    assert str(exc.value) == "[check.a] top must be an integer"
+
+
+def test_per_check_top_accepts_an_integer(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, _ATOMIC + "top = 3\n"), cwd=tmp_path)
+    assert cfg.checks["a"].options["top"] == 3
+
+
+@pytest.mark.parametrize(
+    ("name", "message"),
+    [
+        ('"a/b"', "[check.'a/b'] name must not contain"),
+        ('"a\\\\b"', "name must not contain a path separator"),
+        ('"a\\tb"', "name must not contain"),
+        ('" "', "check names must not be empty"),
+    ],
+)
+def test_check_names_must_be_one_path_segment(
+    tmp_path: Path, name: str, message: str
+) -> None:
+    """A name becomes part of the run directory's name."""
+    body = f'[check.{name}]\ncommand = "true"\nparser = "generic"\n'
+    with pytest.raises(
+        ConfigError, match=message.replace("[", r"\[").replace(".", r"\.")
+    ):
+        load_config(_write(tmp_path, body), cwd=tmp_path)
+
+
+def test_check_names_may_still_be_dotted_or_spaced(tmp_path: Path) -> None:
+    body = '[check."py.test"]\ncommand = "true"\nparser = "generic"\n'
+    body += '[check."unit tests"]\ncommand = "true"\nparser = "generic"\n'
+    cfg = load_config(_write(tmp_path, body), cwd=tmp_path)
+    assert set(cfg.checks) == {"py.test", "unit tests"}
+
+
 def test_timeout_absent_stays_none(tmp_path: Path) -> None:
     cfg = load_config(_write(tmp_path, _ATOMIC), cwd=tmp_path)
     assert cfg.checks["a"].timeout is None

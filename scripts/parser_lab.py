@@ -152,8 +152,16 @@ FILES: dict[str, str] = {
     "pylintok/a.py": '"""Doc."""\nprint("hello")\n',
     "req_vuln.txt": "requests==2.19.1\n",
     "req_clean.txt": "six==1.17.0\n",
+    "req_private.txt": "zz-ckdn-lab-not-on-pypi==0.1.0\n",
+    "scanbad/broken.py": "def f(:\n",
+    "scanbad/fine.py": "x = 1\n",
     "hooks/todo.py": "# FIXME: later\n",
     ".pre-commit-ok.yaml": "repos:\n  - repo: local\n    hooks:" + _PRECOMMIT_OK_HOOK,
+    ".pre-commit-skip.yaml": (
+        "repos:\n  - repo: local\n    hooks:\n      - id: no-fixme\n"
+        "        name: no FIXME markers\n        entry: FIXME\n"
+        "        language: pygrep\n        files: ^no-such-dir/\n"
+    ),
     ".pre-commit-config.yaml": (
         "repos:\n  - repo: local\n    hooks:"
         + _PRECOMMIT_OK_HOOK
@@ -402,6 +410,30 @@ SCENARIOS: tuple[Scenario, ...] = (
         pip_audit_vulns,
         _AUDIT_OPTS,
     ),
+    # a package pip-audit cannot audit: rc 0, and unaudited is not clean
+    Scenario(
+        "audit_skipped",
+        f"{_AUDIT} --no-deps --disable-pip -r req_private.txt",
+        "pip_audit",
+        pip_audit_vulns,
+        _AUDIT_OPTS,
+        gated=True,
+    ),
+    Scenario(
+        "audit_skipped_ok",
+        f"{_AUDIT} --no-deps --disable-pip -r req_private.txt",
+        "pip_audit",
+        pip_audit_vulns,
+        {**_AUDIT_OPTS, "allow_skipped": ["zz-ckdn-lab-not-on-pypi"]},
+    ),
+    # a file bandit cannot parse: rc 0, and unscanned is not clean
+    Scenario(
+        "bandit_unscanned",
+        "bandit -q -r scanbad -f json -o {run_dir}/bandit.json",
+        "bandit",
+        bandit_results,
+        gated=True,
+    ),
     Scenario(
         "bandit_fail",
         f"{_BANDIT} -f json -o {{run_dir}}/bandit.json",
@@ -480,6 +512,15 @@ SCENARIOS: tuple[Scenario, ...] = (
         "pre_commit",
         PRECOMMIT_FAILED,
         {"timeout": 300},
+    ),
+    # every hook skipped: rc 0, and nothing was checked
+    Scenario(
+        "precommit_skipped",
+        "pre-commit run --all-files --config .pre-commit-skip.yaml",
+        "pre_commit",
+        PRECOMMIT_FAILED,
+        {"timeout": 300},
+        gated=True,
     ),
 )
 

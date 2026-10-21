@@ -20,6 +20,7 @@ Always present: ``schema``, ``check``, ``status``, ``rc``, ``run_dir``.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,11 @@ def prune_summary(value: Any) -> Any:
     # `False == 0`, so the zero test already drops it -- deliberately: a false
     # flag is the default state, and printing it is noise.
     if value is None or value == "" or value == 0 or value == 0.0:
+        return None
+    # NaN and infinity are not JSON (RFC 8259); `json.dumps` would write them
+    # anyway, and strict readers reject the whole digest. A parser that met
+    # one says so in its notes.
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
 

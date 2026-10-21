@@ -684,6 +684,40 @@ def test_pre_commit_unparsed_output_flips_parser_ok(tmp_path: Path) -> None:
     assert result.parser_ok is False
 
 
+PRE_COMMIT_ALL_SKIPPED = """\
+ruff check...........................................(no files to check)Skipped
+ruff format..........................................(no files to check)Skipped
+"""
+
+
+@pytest.mark.parametrize("log", [PRE_COMMIT_ALL_SKIPPED, ""], ids=["skipped", "none"])
+def test_pre_commit_run_where_no_hook_ran_fails_the_gate(
+    tmp_path: Path, log: str
+) -> None:
+    result = PreCommitTextParser().parse(ctx(tmp_path, rc=0, log=log))
+    assert result.parser_ok
+    assert result.gate_failures == [
+        "no pre-commit hook ran (every hook was skipped, or none is configured), "
+        "so nothing was checked; set `allow_all_skipped = true` if that is expected"
+    ]
+    assert reconcile(0, result)[0] == "fail"
+
+
+def test_pre_commit_allow_all_skipped_accepts_a_run_that_checked_nothing(
+    tmp_path: Path,
+) -> None:
+    accepted = PreCommitTextParser().parse(
+        ctx(tmp_path, rc=0, log=PRE_COMMIT_ALL_SKIPPED, allow_all_skipped=True)
+    )
+    assert accepted.gate_failures == []
+    assert reconcile(0, accepted)[0] == "pass"
+    # Only a real boolean accepts; a string is a typo, not a decision.
+    typo = PreCommitTextParser().parse(
+        ctx(tmp_path, rc=0, log=PRE_COMMIT_ALL_SKIPPED, allow_all_skipped="true")
+    )
+    assert typo.gate_failures
+
+
 # --- pip_audit --------------------------------------------------------------
 
 PIP_AUDIT_JSON = """\
@@ -714,7 +748,86 @@ def test_pip_audit_reads_report(tmp_path: Path) -> None:
     assert len(result.findings) == 1
     assert result.findings[0].kind == "vulnerability"
     assert result.summary["skipped_packages"] == 1
-    assert any("skipped" in n for n in result.notes)
+    assert result.gate_failures == [
+        "pip-audit could not audit 1 package(s): local-pkg; unaudited is not "
+        "clean (accept known ones with `allow_skipped`)"
+    ]
+    assert "local-pkg: not on index" in result.notes
+
+
+# Captured from pip-audit 2.10.1 on a venv holding a private editable project:
+# a package it could not audit sits in `dependencies`, with no `vulns` and no
+# top-level `skipped` array anywhere in the report.
+PIP_AUDIT_SKIPPED_REAL = """{"dependencies": [
+  {"name": "requests", "version": "2.32.5", "vulns": []},
+  {"name": "zz-private-pkg", "skip_reason": "Dependency not found on PyPI and \
+could not be audited: zz-private-pkg (0.1.0)"}
+], "fixes": []}
+"""
+
+
+def test_pip_audit_unaudited_package_fails_the_gate(tmp_path: Path) -> None:
+    (tmp_path / "pip-audit.json").write_text(PIP_AUDIT_SKIPPED_REAL, encoding="utf-8")
+    result = PipAuditJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok
+    assert result.findings == []
+    assert result.summary["skipped_packages"] == 1
+    assert len(result.gate_failures) == 1
+    assert "could not audit 1 package(s): zz-private-pkg" in result.gate_failures[0]
+    assert reconcile(0, result)[0] == "fail"
+
+
+@pytest.mark.parametrize(
+    "allow",
+    [True, ["zz-private-pkg"], ["ZZ_Private.pkg"]],
+    ids=["all", "name", "pep503"],
+)
+def test_pip_audit_allow_skipped_accepts_named_packages(
+    tmp_path: Path, allow: object
+) -> None:
+    (tmp_path / "pip-audit.json").write_text(PIP_AUDIT_SKIPPED_REAL, encoding="utf-8")
+    result = PipAuditJsonParser().parse(ctx(tmp_path, rc=0, allow_skipped=allow))
+    assert result.gate_failures == []
+    assert result.notes == [
+        "1 package(s) not audited, accepted by allow_skipped: zz-private-pkg"
+    ]
+    assert reconcile(0, result)[0] == "pass"
+
+
+def test_pip_audit_allow_skipped_only_covers_the_listed_names(tmp_path: Path) -> None:
+    doc = {
+        "dependencies": [
+            {"name": "mine", "skip_reason": "not on PyPI"},
+            {"name": "theirs", "skip_reason": "not on PyPI"},
+        ],
+        "skipped": ["legacy-entry"],
+    }
+    (tmp_path / "pip-audit.json").write_text(json.dumps(doc), encoding="utf-8")
+    parsed = PipAuditJsonParser().parse(
+        ParseContext(
+            run_dir=tmp_path,
+            log_text="",
+            rc=0,
+            options={"allow_skipped": ["mine"]},
+            top=1,
+            max_snippet_lines=12,
+        )
+    )
+    assert parsed.gate_failures == [
+        "pip-audit could not audit 2 package(s): theirs …; unaudited is not "
+        "clean (accept known ones with `allow_skipped`)"
+    ]
+    assert "theirs: not on PyPI" in parsed.notes
+
+
+@pytest.mark.parametrize("allow", ["mine", [1], {"mine": True}])
+def test_pip_audit_rejects_a_malformed_allow_skipped(
+    tmp_path: Path, allow: object
+) -> None:
+    (tmp_path / "pip-audit.json").write_text(PIP_AUDIT_SKIPPED_REAL, encoding="utf-8")
+    result = PipAuditJsonParser().parse(ctx(tmp_path, rc=0, allow_skipped=allow))
+    assert result.parser_ok is False
+    assert result.notes == ["`allow_skipped` must be true or a list of package names"]
 
 
 def test_pip_audit_missing_report_flips_parser_ok(tmp_path: Path) -> None:
@@ -768,6 +881,50 @@ def test_bandit_reads_report(tmp_path: Path) -> None:
     assert len(result.findings) == 1
     assert result.findings[0].kind == "security_issue"
     assert "CWE-703" in result.findings[0].detail
+
+
+# Captured from bandit 1.9.4: a file it cannot parse is listed under `errors`,
+# and bandit still exits 0 when nothing else was found.
+BANDIT_SCAN_ERROR = """\
+{"errors": [{"filename": "bsrc/bad.py",
+  "reason": "syntax error while parsing AST from file"}],
+ "results": [],
+ "metrics": {"_totals": {"SEVERITY.HIGH": 0, "SEVERITY.LOW": 0,
+  "SEVERITY.MEDIUM": 0, "SEVERITY.UNDEFINED": 0, "loc": 3}}}
+"""
+
+
+def test_bandit_unscanned_file_fails_the_gate(tmp_path: Path) -> None:
+    (tmp_path / "bandit.json").write_text(BANDIT_SCAN_ERROR, encoding="utf-8")
+    result = BanditJsonParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok
+    assert result.summary["scan_errors"] == 1
+    assert result.gate_failures == [
+        "bandit could not scan 1 file(s): bsrc/bad.py; unscanned is not clean "
+        "(fix them, or exclude them with `-x`)"
+    ]
+    assert "bsrc/bad.py: syntax error while parsing AST from file" in result.notes
+    assert reconcile(0, result)[0] == "fail"
+
+
+def test_bandit_scan_errors_are_bounded_and_tolerate_odd_entries(
+    tmp_path: Path,
+) -> None:
+    doc = {
+        "errors": [{"filename": f"f{i}.py"} for i in range(3)] + ["junk"],
+        "results": [],
+    }
+    (tmp_path / "bandit.json").write_text(json.dumps(doc), encoding="utf-8")
+    parsed = BanditJsonParser().parse(
+        ParseContext(
+            run_dir=tmp_path, log_text="", rc=0, options={}, top=2, max_snippet_lines=12
+        )
+    )
+    assert parsed.gate_failures == [
+        "bandit could not scan 3 file(s): f0.py, f1.py …; unscanned is not clean "
+        "(fix them, or exclude them with `-x`)"
+    ]
+    assert parsed.notes == []  # no reasons given, none invented
 
 
 def test_bandit_metrics_mismatch_flips_parser_ok(tmp_path: Path) -> None:
@@ -1565,6 +1722,26 @@ def test_coverage_bad_numeric_attrs(tmp_path: Path) -> None:
     assert result.parser_ok
 
 
+@pytest.mark.parametrize("rate", ["NaN", "inf", "1.5", "-0.1"])
+def test_coverage_rate_that_is_not_a_fraction_is_untrusted(
+    tmp_path: Path, rate: str
+) -> None:
+    """`float()` takes "NaN", and NaN compares false: no gate ever fired."""
+    xml = COVERAGE_XML.replace('line-rate="0.8"', f'line-rate="{rate}"')
+    (tmp_path / "coverage.xml").write_text(xml, encoding="utf-8")
+    result = CoverageXmlParser().parse(ctx(tmp_path, rc=0, fail_under=90.0))
+    assert result.parser_ok is False
+    assert "not a fraction between 0 and 1" in result.notes[0]
+    assert reconcile(0, result)[0] == "parse_mismatch"
+
+
+def test_coverage_nan_threshold_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "coverage.xml").write_text(COVERAGE_XML, encoding="utf-8")
+    result = CoverageXmlParser().parse(ctx(tmp_path, rc=0, fail_under=float("nan")))
+    assert result.parser_ok is False
+    assert "`fail_under` must be a finite number" in result.notes
+
+
 def test_ruff_invalid_json(tmp_path: Path) -> None:
     (tmp_path / "ruff.json").write_text("{", encoding="utf-8")
     result = RuffJsonParser().parse(ctx(tmp_path, rc=1))
@@ -1587,6 +1764,22 @@ def test_pylint_score_gate_fails(tmp_path: Path) -> None:
     (tmp_path / "pylint.json").write_text(PYLINT_JSON, encoding="utf-8")
     result = PylintJsonParser().parse(ctx(tmp_path, rc=3, score_fail_under=10.0))
     assert result.gate_failures
+
+
+@pytest.mark.parametrize(
+    ("score", "under"),
+    [(float("nan"), 9.0), (9.5, float("nan"))],
+    ids=["score", "gate"],
+)
+def test_pylint_non_finite_score_or_threshold_is_untrusted(
+    tmp_path: Path, score: float, under: float
+) -> None:
+    doc = {"messages": [], "statistics": {"messageTypeCount": {}, "score": score}}
+    (tmp_path / "pylint.json").write_text(json.dumps(doc), encoding="utf-8")
+    result = PylintJsonParser().parse(ctx(tmp_path, rc=0, score_fail_under=under))
+    assert result.parser_ok is False
+    assert "not a finite number" in result.notes[-1]
+    assert reconcile(0, result)[0] == "parse_mismatch"
 
 
 def test_clamp_and_format_location() -> None:
