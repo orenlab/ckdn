@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,13 @@ from ckdn.digest import (
     META_NAME,
     build_alias_aggregate,
     build_digest,
+    build_meta,
     dump_json,
     dump_json_pretty,
     list_artifacts,
     prune_summary,
+    write_digest,
+    write_meta,
 )
 from ckdn.parsers.base import Finding, ParseResult
 from ckdn.runner import RunOutcome
@@ -246,6 +250,54 @@ def test_list_artifacts_skips_directories(tmp_path: Path) -> None:
     (tmp_path / "docs-build").mkdir()
 
     assert list_artifacts(tmp_path) == ["full.log"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_list_artifacts_skips_symlinks(tmp_path: Path) -> None:
+    """A planted link is not an artifact: no reader may follow it out."""
+    (tmp_path / "full.log").write_text("x", encoding="utf-8")
+    outside = tmp_path.parent / f"{tmp_path.name}-secret"
+    outside.write_text("secret", encoding="utf-8")
+    (tmp_path / "report.json").symlink_to(outside)
+
+    assert list_artifacts(tmp_path) == ["full.log"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_documents_replace_a_planted_link_instead_of_writing_through_it(
+    tmp_path: Path,
+) -> None:
+    victim = tmp_path.parent / f"{tmp_path.name}-victim"
+    victim.write_text("original", encoding="utf-8")
+    for name in (DIGEST_NAME, META_NAME):
+        (tmp_path / name).symlink_to(victim)
+    write_meta(tmp_path, {"m": 1})
+    write_digest(tmp_path, {"d": 1})
+    assert victim.read_text(encoding="utf-8") == "original"
+    assert not (tmp_path / DIGEST_NAME).is_symlink()
+    assert (tmp_path / DIGEST_NAME).read_text(encoding="utf-8") == '{"d":1}\n'
+    assert (tmp_path / META_NAME).read_text(encoding="utf-8") == '{"m":1}\n'
+    # Nothing but the two documents is left behind.
+    assert sorted(p.name for p in tmp_path.iterdir()) == [DIGEST_NAME, META_NAME]
+
+
+def test_meta_records_env_names_but_never_values() -> None:
+    outcome = RunOutcome(
+        run_dir=Path("r"),
+        tokens=["t"],
+        rc=0,
+        log_text="",
+        started_at="2026-01-01T00:00:00+00:00",
+        duration_s=0.0,
+        timed_out=False,
+        exec_note=None,
+    )
+    assert "env_keys" not in build_meta(check="c", parser="generic", outcome=outcome)
+    meta = build_meta(
+        check="c", parser="generic", outcome=outcome, env={"TOKEN": "s3cret", "A": "1"}
+    )
+    assert meta["env_keys"] == ["A", "TOKEN"]
+    assert "s3cret" not in dump_json(meta)
 
 
 def test_list_artifacts_sorts_whatever_order_the_filesystem_gives(

@@ -954,15 +954,21 @@ def test_a_late_ctrl_c_does_not_rewrite_a_finished_verdict(
 def test_evidence_refuses_an_artifact_that_symlinks_out_of_the_run(
     tmp_path: Path,
 ) -> None:
-    """The name is listed and legal; the file it points at is not."""
+    """A planted link is neither listed nor readable, even under a legal name."""
     cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
     result = run_one(cfg, cfg.checks["ok"], extra=[])
     secret = tmp_path / "secrets.txt"
     secret.write_text("token\n", encoding="utf-8")
     (result.run_dir / "report.json").symlink_to(secret)
 
-    with pytest.raises(ArtifactError, match="escapes run directory"):
+    assert "report.json" not in get_evidence(cfg)["artifacts"]
+    with pytest.raises(ArtifactError, match="not found in run"):
         get_evidence(cfg, artifact="report.json")
+    # full.log is always a legal name; swapped for a link it still is not read.
+    (result.run_dir / LOG_NAME).unlink()
+    (result.run_dir / LOG_NAME).symlink_to(secret)
+    with pytest.raises(ArtifactError, match="escapes run directory"):
+        get_evidence(cfg, artifact=LOG_NAME)
 
 
 def test_a_lock_conflict_is_an_app_error_not_a_runtime_error(
@@ -1008,3 +1014,26 @@ def test_a_result_carries_an_empty_fingerprint_set_by_default() -> None:
         check="x", status="pass", rc=0, run_dir=Path("."), digest={}, exit_code=0
     )
     assert result.fingerprints == frozenset()
+
+
+def test_meta_names_the_env_the_command_received(tmp_path: Path) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        '[check.ok.env]\nREPORT = "{run_dir}/r.txt"\n',
+    )
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+    meta = json.loads((result.run_dir / META_NAME).read_text(encoding="utf-8"))
+    assert meta["env_keys"] == ["REPORT"]
+
+
+def test_loader_injection_env_is_refused_before_anything_runs(tmp_path: Path) -> None:
+    cfg = _load_cfg(
+        tmp_path,
+        '[check.ok]\ncommand = "true"\nparser = "generic"\n'
+        '[check.ok.env]\nLD_PRELOAD = "evil.so"\n',
+    )
+    result = run_one(cfg, cfg.checks["ok"], extra=[])
+    assert result.rc == 126
+    assert result.status == "error"
+    assert "env LD_PRELOAD loads code" in result.digest["notes"][0]

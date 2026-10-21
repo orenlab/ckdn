@@ -115,7 +115,11 @@ pid is recorded, and pids get recycled.
 
 The log streams straight to `full.log`, so an interrupted run still leaves the
 output it managed to produce, and `meta.json` records the sha256 of those
-bytes exactly as they sit on disk.
+bytes exactly as they sit on disk. When the tree is gone, ckdn reads the log
+back through its own handle and renames those bytes into place: a check that
+swaps or symlinks `full.log` does not change what is parsed, and a straggler
+in a new session writes into a file nobody reads. `digest.json`, `meta.json`
+and the baseline are written the same way — complete, or not at all.
 
 For an alias, the exit code is the aggregate `rc`; see
 [Aliases & aggregates](aliases.md).

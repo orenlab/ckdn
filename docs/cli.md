@@ -31,7 +31,7 @@ lives.
 | `ckdn doctor [--strict]`                           | pre-flight diagnostics (executables on PATH + parser/command fit)    |
 | `ckdn annotate [ref] [--format F]`                 | render a stored digest's findings as `github` annotations or `sarif` |
 | `ckdn verify-config [--locked] [--lock-file PATH]` | validate command policy (+ optional `ckdn.lock.toml`)                |
-| `ckdn lock-config [-o path]`                       | write command SHA-256 lock file for CI                               |
+| `ckdn lock-config [-o path]`                       | write the lock file for CI: every check and the `[run]` policy       |
 
 `--gate` works on an alias and on `--all` too: the aggregate gate combines the
 members', worst-first — `unavailable` > `fail` > `pass`.

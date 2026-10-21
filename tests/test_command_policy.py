@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from ckdn.config import Config, ConfigError, load_config
 from ckdn.config_lock import (
     LOCK_NAME,
     command_digest,
+    lock_warnings,
     verify_config,
     verify_config_lock,
     write_config_lock,
@@ -356,7 +358,8 @@ def _load(tmp_path: Path, body: str, *, policy: str = "workspace") -> Config:
     return load_config(_cfg(tmp_path, body, policy=policy), cwd=tmp_path)
 
 
-def test_lock_file_skips_aliases(tmp_path: Path) -> None:
+def test_lock_file_pins_aliases_without_a_command(tmp_path: Path) -> None:
+    """Dropping a member from the alias CI runs is as real a change as any."""
     cfg = _load(
         tmp_path,
         '[check.a]\ncommand = "true"\nparser = "generic"\n\n'
@@ -365,7 +368,7 @@ def test_lock_file_skips_aliases(tmp_path: Path) -> None:
     lock = write_config_lock(cfg)
     text = lock.read_text(encoding="utf-8")
     assert "[check.a]" in text
-    assert "group" not in text
+    assert "[check.group]\ncheck_sha256 = " in text
     assert verify_config_lock(cfg) == []
 
 
@@ -454,3 +457,225 @@ def test_sensitive_roots_and_path_shapes_directly() -> None:
     assert _looks_like_path("..") is True
     assert _looks_like_path("src/main.py") is True
     assert _looks_like_path("pytest") is False
+
+
+# --- path shapes the policy used to miss ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git -C/etc status", "cat -C../../.ssh", "cc -I/usr/include x.c"],
+)
+def test_a_value_glued_to_a_short_option_is_still_a_path(
+    tmp_path: Path, command: str
+) -> None:
+    with pytest.raises(CommandPolicyError, match="escapes workspace"):
+        validate_command(
+            command, cwd=tmp_path, policy="workspace", tokens=command.split()
+        )
+
+
+@pytest.mark.parametrize("command", ["pytest -rA -vv -x", "pytest -k slow", "ls -"])
+def test_flag_clusters_are_not_mistaken_for_paths(tmp_path: Path, command: str) -> None:
+    validate_command(command, cwd=tmp_path, policy="workspace", tokens=command.split())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_a_bare_name_that_is_a_symlink_out_of_the_workspace_is_refused(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("x", encoding="utf-8")
+    (ws / "notes").symlink_to(secret)
+    (ws / "inside").symlink_to(ws / "real.txt")
+    (ws / "real.txt").write_text("y", encoding="utf-8")
+    with pytest.raises(CommandPolicyError, match="escapes workspace"):
+        validate_command(
+            "cat notes",
+            cwd=ws,
+            policy="allowlist",
+            tokens=["cat", "notes"],
+            allowlist_prefixes=("cat ",),
+        )
+    # A link that stays inside the workspace is just a path.
+    validate_command("cat inside", cwd=ws, policy="workspace", tokens=["cat", "inside"])
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_a_sensitive_root_that_is_itself_a_link_still_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS: `/etc` links to `/private/etc`, so the resolved candidate never
+    started with the bare root and `cat /etc/passwd` passed from `/private`."""
+    real = tmp_path / "private" / "etc"
+    real.mkdir(parents=True)
+    link = tmp_path / "etc"
+    link.symlink_to(real)
+    monkeypatch.setattr("ckdn.command_policy._SENSITIVE_ROOTS", (link,))
+    assert _is_sensitive_path((link / "passwd").resolve()) is True
+    with pytest.raises(CommandPolicyError, match="sensitive location"):
+        validate_command(
+            f"cat {link}/passwd",
+            cwd=tmp_path / "private",
+            policy="workspace",
+            tokens=["cat", f"{link}/passwd"],
+        )
+
+
+@pytest.mark.parametrize(
+    "key", ["LD_PRELOAD", "LD_AUDIT", "DYLD_INSERT_LIBRARIES", "ld_preload"]
+)
+def test_env_that_injects_code_through_the_loader_is_refused(
+    tmp_path: Path, key: str
+) -> None:
+    for policy in ("workspace", "allowlist"):
+        with pytest.raises(CommandPolicyError, match=f"env {key} loads code"):
+            validate_command(
+                "uv run pytest",
+                cwd=tmp_path,
+                policy=policy,
+                tokens=["uv", "run", "pytest"],
+                env={"PYTHONPATH": "src", key: "./evil.so"},
+            )
+    validate_command(
+        "uv run pytest",
+        cwd=tmp_path,
+        policy="off",
+        tokens=["uv", "run", "pytest"],
+        env={key: "./evil.so"},
+    )
+
+
+def test_verify_config_checks_env_against_the_policy(tmp_path: Path) -> None:
+    cfg = _load(
+        tmp_path,
+        '[check.a]\ncommand = "true"\nparser = "generic"\n'
+        '[check.a.env]\nLD_PRELOAD = "x.so"\n',
+    )
+    assert verify_config(cfg) == [
+        "[check.a] env LD_PRELOAD loads code into every process the check "
+        'starts; it is only allowed with command_policy = "off"'
+    ]
+
+
+# --- the lock pins the whole check ------------------------------------------
+
+_LOCKED_BASE = (
+    '[check.cov]\ncommand = "true"\nparser = "coverage"\nfail_under = 100.0\n'
+    "timeout = 60\n"
+    '[check.cov.env]\nA = "1"\n'
+    '[check.ci]\nmembers = ["cov"]\n'
+)
+
+
+def _relock_then_edit(
+    tmp_path: Path, edited: str, *, policy: str = "workspace"
+) -> list[str]:
+    cfg = _load(tmp_path, _LOCKED_BASE)
+    write_config_lock(cfg)
+    return verify_config_lock(_load(tmp_path, edited, policy=policy))
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('parser = "coverage"', 'parser = "generic"'),
+        ("fail_under = 100.0\n", ""),
+        ("timeout = 60", "timeout = 6000"),
+        ('A = "1"', 'A = "2"'),
+    ],
+    ids=["parser", "option", "timeout", "env"],
+)
+def test_lock_catches_a_changed_check_definition(
+    tmp_path: Path, old: str, new: str
+) -> None:
+    errors = _relock_then_edit(tmp_path, _LOCKED_BASE.replace(old, new))
+    assert errors == ["[check.cov] parser, options, env or timeout changed since lock"]
+
+
+def test_lock_catches_a_changed_alias(tmp_path: Path) -> None:
+    edited = _LOCKED_BASE.replace(
+        'members = ["cov"]', 'members = ["cov"]\nfail_fast = false'
+    )
+    errors = _relock_then_edit(tmp_path, edited)
+    assert errors == ["[check.ci] members or fail_fast changed since lock"]
+
+
+def test_lock_catches_a_changed_run_policy(tmp_path: Path) -> None:
+    errors = _relock_then_edit(tmp_path, _LOCKED_BASE, policy="off")
+    assert errors == [
+        "[run] command_policy, command_allowlist, baseline or runs_dir "
+        "changed since lock"
+    ]
+
+
+def test_an_unchanged_config_verifies_against_its_full_lock(tmp_path: Path) -> None:
+    assert _relock_then_edit(tmp_path, _LOCKED_BASE) == []
+    cfg = _load(tmp_path, _LOCKED_BASE)
+    assert lock_warnings(cfg) == []
+
+
+def test_a_full_lock_reports_entries_it_lacks(tmp_path: Path) -> None:
+    cfg = _load(tmp_path, _LOCKED_BASE)
+    (tmp_path / LOCK_NAME).write_text(
+        '[run]\nsettings_sha256 = ""\n'
+        f'[check.cov]\ncommand_sha256 = "{command_digest("true")}"\n',
+        encoding="utf-8",
+    )
+    assert verify_config_lock(cfg) == [
+        "[run] missing settings_sha256 in lock file",
+        "[check.ci] missing from ckdn.lock.toml",
+        "[check.cov] missing check_sha256 in lock file",
+    ]
+
+
+def test_a_command_only_lock_still_verifies_commands_and_warns(
+    tmp_path: Path,
+) -> None:
+    """Locks written before the full digest keep working, with a warning."""
+    cfg = _load(tmp_path, _LOCKED_BASE)
+    (tmp_path / LOCK_NAME).write_text(
+        f'[check.cov]\ncommand_sha256 = "{command_digest("true")}"\n',
+        encoding="utf-8",
+    )
+    assert verify_config_lock(cfg) == []
+    assert lock_warnings(cfg) == [
+        "the lock file pins commands only (written by an older ckdn): parsers, "
+        "options, env, timeouts, aliases and [run] policy can change unnoticed; "
+        "run `ckdn lock-config` and commit the result"
+    ]
+    (tmp_path / LOCK_NAME).write_text(
+        f'[check.cov]\ncommand_sha256 = "{command_digest("false")}"\n',
+        encoding="utf-8",
+    )
+    assert len(verify_config_lock(cfg)) == 1
+    assert lock_warnings(_load(tmp_path, _LOCKED_BASE, policy="off")) != []
+
+
+def test_lock_warnings_stay_quiet_without_a_readable_lock(tmp_path: Path) -> None:
+    cfg = _load(tmp_path, _LOCKED_BASE)
+    assert lock_warnings(cfg) == []
+
+
+def test_a_new_lock_stays_readable_by_older_ckdn(tmp_path: Path) -> None:
+    """ckdn <= 1.3.6 reads `command_sha256` from every [check.*] table only."""
+    import tomllib
+
+    cfg = _load(tmp_path, _LOCKED_BASE)
+    data = tomllib.loads(write_config_lock(cfg).read_text(encoding="utf-8"))
+    assert data["check"]["cov"]["command_sha256"] == command_digest("true")
+    assert "command_sha256" not in data["check"]["ci"]
+
+
+def test_lock_quotes_names_toml_would_split(tmp_path: Path) -> None:
+    """Written bare, `py.test` read back as nested tables and never matched."""
+    cfg = _load(
+        tmp_path,
+        '[check."py.test"]\ncommand = "true"\nparser = "generic"\n'
+        '[check."unit tests"]\ncommand = "true"\nparser = "generic"\n',
+    )
+    text = write_config_lock(cfg).read_text(encoding="utf-8")
+    assert '[check."py.test"]' in text
+    assert verify_config_lock(cfg) == []

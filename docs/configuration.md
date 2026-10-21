@@ -119,7 +119,10 @@ from the previous one.
 Optional **`env`** (a table of string values) is overlaid on the subprocess
 environment for that check only — the inherited environment (`PATH`, …) is
 preserved. `{run_dir}` is substituted in env values, so a tool can be pointed
-at the run directory. `env` is never written to `meta.json`.
+at the run directory. `meta.json` records only the variable names
+(`env_keys`), never their values. `LD_PRELOAD`, `LD_AUDIT` and
+`DYLD_INSERT_LIBRARIES` are refused unless `command_policy = "off"`: they load
+code into every process the check starts.
 
 ```toml
 [check.coverage]
@@ -152,7 +155,9 @@ absolute paths outside cwd are rejected by that containment check. A second,
 narrower denylist — `/etc`, `/proc`, `/sys`, `/dev` and `~/.ssh`, `~/.aws`,
 `~/.gnupg`, `~/.netrc`, `~/.docker`, `~/.kube` — applies to paths that pass
 containment, so it only bites when cwd is itself inside one of them. MCP
-`extra_args` are subject to the same rules.
+`extra_args` are subject to the same rules. A value glued to a short option
+(`-C/etc`) is checked like any other token, and so is a bare name that is a
+symlink in the workspace.
 
 The three settings are not a spectrum from loose to strict:
 
@@ -177,8 +182,12 @@ normal run directory and digest, an empty `full.log`, `rc` 126 and status
 `error`, and a note naming the prefixes that were allowed. No subprocess is
 ever started.
 
-In CI, `ckdn lock-config` then `ckdn verify-config --locked` catches tampered
-commands without running them.
+In CI, `ckdn lock-config` then `ckdn verify-config --locked` catches config
+changes without running anything. The lock pins each check's command, parser,
+options, `env` and `timeout`, each alias's members, and the `[run]` settings
+`command_policy`, `command_allowlist`, `baseline` and `runs_dir`. A lock
+written by ckdn before 1.4.0 pins commands only: it still verifies them, with
+a warning to regenerate it.
 
 ## Pre-flight diagnostics
 

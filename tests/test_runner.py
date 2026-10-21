@@ -590,6 +590,96 @@ def test_meta_hash_describes_the_bytes_that_are_on_disk(tmp_path: Path) -> None:
     assert outcome.log_size == len(on_disk)
 
 
+_SWAP_THE_LOG = """
+import os, sys
+log = os.path.join(sys.argv[1], "full.log")
+sys.stdout.write("error: the real result\\n"); sys.stdout.flush()
+os.unlink(log)
+if sys.argv[2] == "file":
+    with open(log, "w") as fh:
+        fh.write("All checks passed!\\n")
+elif sys.argv[2] != "gone":
+    os.symlink(sys.argv[2], log)
+"""
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a log ckdn holds open cannot be unlinked")
+@pytest.mark.parametrize("planted", ["file", "symlink", "gone"])
+def test_a_log_swapped_during_the_run_is_ignored_and_restored(
+    tmp_path: Path, planted: str
+) -> None:
+    """The log is read through ckdn's own handle, never re-opened by path.
+
+    Re-opening it let the process tree hand the parser a "clean" log in place
+    of a failing one, or point `full.log` at any file and have its contents
+    copied into the digest's log tail.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE\n", encoding="utf-8")
+    target = str(secret) if planted == "symlink" else planted
+    outcome = execute(
+        [sys.executable, "-c", _SWAP_THE_LOG, str(run_dir), target],
+        tmp_path,
+        run_dir,
+        30,
+    )
+    assert outcome.rc == 0
+    assert outcome.log_text == "error: the real result\n"
+    log = run_dir / LOG_NAME
+    assert not log.is_symlink()
+    assert log.read_bytes() == b"error: the real result\n"
+    assert outcome.log_sha256 == hashlib.sha256(log.read_bytes()).hexdigest()
+    assert outcome.exec_note == (
+        "full.log was replaced or removed while the command ran; ckdn kept "
+        "and restored the output the command wrote"
+    )
+    assert secret.read_text(encoding="utf-8") == "PRIVATE\n"
+
+
+_ESCAPE_AND_WRITE_LATER = """
+import os, sys, time
+if os.fork() == 0:
+    os.setsid()
+    time.sleep(1.0)
+    os.write(1, b"AFTER_SEAL\\n")
+    os._exit(0)
+print("before", flush=True)
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX sessions")
+def test_a_straggler_in_its_own_session_cannot_change_the_sealed_log(
+    tmp_path: Path,
+) -> None:
+    """A descendant that left the process group outlives the run (documented);
+    whatever it writes afterwards must not alter the log meta.json hashed."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outcome = execute(
+        [sys.executable, "-c", _ESCAPE_AND_WRITE_LATER], tmp_path, run_dir, 30
+    )
+    time.sleep(2.0)  # the straggler writes after one second
+    on_disk = (run_dir / LOG_NAME).read_bytes()
+    assert on_disk == b"before\n"
+    assert outcome.log_sha256 == hashlib.sha256(on_disk).hexdigest()
+
+
+def test_a_log_that_cannot_be_republished_still_reaches_the_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _refuse(path: Path, data: bytes, *, durable: bool = True) -> None:
+        raise PermissionError("held open elsewhere")
+
+    monkeypatch.setattr("ckdn.runner.write_atomic", _refuse)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outcome = execute([sys.executable, "-c", "print('kept')"], tmp_path, run_dir, 30)
+    assert outcome.log_text.strip() == "kept"
+    assert outcome.exec_note is None
+
+
 def test_two_checks_whose_names_sanitize_alike_get_separate_locks(
     tmp_path: Path,
 ) -> None:

@@ -20,10 +20,12 @@ Always present: ``schema``, ``check``, ``status``, ``rc``, ``run_dir``.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from ckdn import AGGREGATE_SCHEMA, DIGEST_SCHEMA, META_SCHEMA, __version__
+from ckdn._files import write_text_atomic
 from ckdn.parsers.base import ParseResult
 from ckdn.runner import DIGEST_NAME, RunOutcome
 
@@ -186,12 +188,18 @@ def build_alias_aggregate(
     return aggregate
 
 
-def build_meta(*, check: str, parser: str, outcome: RunOutcome) -> dict[str, Any]:
+def build_meta(
+    *,
+    check: str,
+    parser: str,
+    outcome: RunOutcome,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     # Both fields describe `full.log` as it sits on disk, so an external
     # `sha256 full.log` agrees. Re-encoding `log_text` did not: decoding
     # collapses CRLF, so one Windows-authored newline was enough to make an
     # independent check report the evidence as tampered with.
-    return {
+    meta: dict[str, Any] = {
         "schema": META_SCHEMA,
         "ckdn_version": __version__,
         "check": check,
@@ -205,6 +213,12 @@ def build_meta(*, check: str, parser: str, outcome: RunOutcome) -> dict[str, Any
         "log_bytes": outcome.log_size,
         "interrupted": outcome.interrupted,
     }
+    # Which variables the check's env overlay set: they can change a verdict
+    # as surely as argv can (PYTEST_ADDOPTS, SKIP). Names only -- a value may
+    # be a secret, and run directories get uploaded; the lock pins the values.
+    if env:
+        meta["env_keys"] = sorted(env)
+    return meta
 
 
 def write_meta(run_dir: Path, meta: dict[str, Any]) -> None:
@@ -215,16 +229,18 @@ def write_meta(run_dir: Path, meta: dict[str, Any]) -> None:
     left no room for the listing between them and silently dropped
     ``meta.json`` from every digest.
     """
-    (run_dir / META_NAME).write_text(dump_json(meta), encoding="utf-8")
+    write_text_atomic(run_dir / META_NAME, dump_json(meta))
 
 
 def write_digest(run_dir: Path, digest: dict[str, Any]) -> None:
     """Write the digest -- always last.
 
     ``prune`` reads the presence of ``digest.json`` as "this run finished", so
-    nothing may be written to the run directory after it.
+    nothing may be written to the run directory after it -- and it must never
+    exist half-written, or a crash mid-write would mark the run finished and
+    let ``prune`` delete its evidence. Hence the atomic write.
     """
-    (run_dir / DIGEST_NAME).write_text(dump_json(digest), encoding="utf-8")
+    write_text_atomic(run_dir / DIGEST_NAME, dump_json(digest))
 
 
 def list_artifacts(run_dir: Path) -> list[str]:
@@ -234,7 +250,12 @@ def list_artifacts(run_dir: Path) -> list[str]:
     bytes must never depend on its own bytes. Everything else the run left
     behind is fair game, ``meta.json`` included -- it is a sibling document
     readers are pointed at, not part of the digest.
+
+    Symlinks are not artifacts: the run's process tree can plant one pointing
+    anywhere, and the digest must not advertise a file no reader may open.
     """
     return sorted(
-        p.name for p in run_dir.iterdir() if p.is_file() and p.name != DIGEST_NAME
+        p.name
+        for p in run_dir.iterdir()
+        if p.is_file() and not p.is_symlink() and p.name != DIGEST_NAME
     )

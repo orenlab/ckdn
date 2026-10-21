@@ -263,6 +263,11 @@ def _run_atomic(
     """
     run_dir = create_run_dir(cfg.runs_dir, check.name)
     tokens = build_tokens(command, run_dir, extra)
+    run_env = {
+        key: value.replace("{run_dir}", str(run_dir))
+        for key, value in check.env.items()
+    }
+    top = int(check.options.get("top", cfg.run.top))
     policy_blocked = False
     try:
         validate_command(
@@ -271,6 +276,7 @@ def _run_atomic(
             policy=cfg.run.command_policy,
             allowlist_prefixes=cfg.run.command_allowlist,
             tokens=tokens,
+            env=run_env,
         )
     except CommandPolicyError as exc:
         policy_blocked = True
@@ -292,16 +298,12 @@ def _run_atomic(
             include_log_tail=True,
         )
     else:
-        run_env = {
-            key: value.replace("{run_dir}", str(run_dir))
-            for key, value in check.env.items()
-        } or None
         outcome = execute(
             tokens,
             cwd=cfg.cwd,
             run_dir=run_dir,
             timeout=check.timeout,
-            env=run_env,
+            env=run_env or None,
         )
 
     if not policy_blocked:
@@ -312,7 +314,7 @@ def _run_atomic(
                     log_text=outcome.log_text,
                     rc=outcome.rc,
                     options=check.options,
-                    top=int(check.options.get("top", cfg.run.top)),
+                    top=top,
                     max_snippet_lines=cfg.run.max_snippet_lines,
                     cwd=cfg.cwd,
                 )
@@ -366,7 +368,9 @@ def _run_atomic(
             interrupted=outcome.interrupted,
             timed_out=outcome.timed_out,
         )
-        meta = build_meta(check=check.name, parser=parser.name, outcome=outcome)
+        meta = build_meta(
+            check=check.name, parser=parser.name, outcome=outcome, env=run_env
+        )
         # The provenance document is written before the run directory is
         # listed, so the digest can index it. Bundling both writes after the
         # listing is what dropped meta.json from every digest ever emitted.
@@ -382,7 +386,7 @@ def _run_atomic(
             outcome=outcome,
             result=result,
             run_dir_rel=run_dir_rel,
-            top=int(check.options.get("top", cfg.run.top)),
+            top=top,
             include_tail=include_tail,
             tail_lines=cfg.run.log_tail_lines,
             artifacts=list_artifacts(run_dir),

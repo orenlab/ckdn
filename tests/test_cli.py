@@ -649,6 +649,27 @@ def test_verify_config_prints_every_error_and_exits_1(
     assert "lock file not found" in err
 
 
+def test_verify_config_warns_about_a_command_only_lock_but_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ckdn.config_lock import command_digest
+
+    cfg = _cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+    (tmp_path / LOCK_NAME).write_text(
+        f'[check.ok]\ncommand_sha256 = "{command_digest("true")}"\n',
+        encoding="utf-8",
+    )
+    assert cli.main(["verify-config", "--config", str(cfg), "--locked"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "ok\n"
+    assert captured.err.startswith("ckdn: warning: the lock file pins commands only")
+    # Regenerated, the warning is gone.
+    assert cli.main(["lock-config", "--config", str(cfg)]) == 0
+    capsys.readouterr()
+    assert cli.main(["verify-config", "--config", str(cfg), "--locked"]) == 0
+    assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
