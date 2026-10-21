@@ -39,6 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
+from ckdn._files import write_atomic, write_text_atomic
+
 LOG_NAME = "full.log"
 #: A run directory without this file has not finished writing itself.
 DIGEST_NAME = "digest.json"
@@ -377,6 +379,47 @@ def _await_child(proc: subprocess.Popen[bytes], timeout: float | None) -> _Endin
         )
 
 
+def _same_file(fh: IO[bytes], path: Path) -> bool:
+    """Whether ``path`` still names the file behind ckdn's own handle."""
+    try:
+        return os.path.samestat(os.fstat(fh.fileno()), os.lstat(path))
+    except OSError:
+        return False
+
+
+def _seal_log(log_fh: IO[bytes] | None, log_path: Path) -> tuple[bytes, str | None]:
+    """Take the log from ckdn's own handle and publish exactly those bytes.
+
+    The run's process tree knows where ``full.log`` lives, so reading it back
+    by path would trust whatever sits there now: a removed, swapped or
+    symlinked file -- a "clean" log written over a failing one, or another
+    file's contents pulled into the digest. The handle ckdn opened always
+    reads the stream the command actually wrote.
+
+    The bytes are then renamed into place rather than left in the file the
+    tree still holds. A straggler that escaped the process group (a new
+    session) keeps writing into the old file, which nothing reads any more,
+    so ``full.log`` stays exactly the bytes ``meta.json`` hashed.
+    """
+    data = b""
+    replaced = False
+    if log_fh is not None:
+        with log_fh:
+            log_fh.seek(0)
+            data = log_fh.read()
+            replaced = not _same_file(log_fh, log_path)
+    # On failure the run directory itself is gone, or (Windows) a straggler
+    # outside the job still holds the file. The digest still gets the bytes.
+    with contextlib.suppress(OSError):
+        write_atomic(log_path, data, durable=False)
+    if not replaced:
+        return data, None
+    return data, (
+        "full.log was replaced or removed while the command ran; ckdn kept "
+        "and restored the output the command wrote"
+    )
+
+
 def execute(
     tokens: list[str],
     cwd: Path,
@@ -392,25 +435,23 @@ def execute(
     log_path = run_dir / LOG_NAME
     ending = _Ending(rc=RC_NOT_FOUND)
     proc: subprocess.Popen[bytes] | None = None
+    log_fh: IO[bytes] | None = None
 
     try:
         # Stream to the log file: no pipe means no descendant can hold the
-        # parent hostage, and partial output survives an interrupt.
-        with log_path.open("wb") as log_fh:
-            try:
-                proc = _spawn(tokens, cwd, log_fh, run_env)
-            except FileNotFoundError as exc:
-                ending = _Ending(
-                    rc=RC_NOT_FOUND, note=f"command not found: {exc.filename}"
-                )
-            except OSError as exc:
-                ending = _Ending(
-                    rc=RC_NOT_FOUND, note=f"failed to start command: {exc}"
-                )
-            else:
-                if sys.platform == "win32":  # pragma: no cover - Windows CI
-                    _win32().attach_job(proc)
-                ending = _await_child(proc, timeout)
+        # parent hostage, and partial output survives an interrupt. The handle
+        # stays open until the tree is gone: it is how the log is read back.
+        log_fh = log_path.open("w+b")
+        try:
+            proc = _spawn(tokens, cwd, log_fh, run_env)
+        except FileNotFoundError as exc:
+            ending = _Ending(rc=RC_NOT_FOUND, note=f"command not found: {exc.filename}")
+        except OSError as exc:
+            ending = _Ending(rc=RC_NOT_FOUND, note=f"failed to start command: {exc}")
+        else:
+            if sys.platform == "win32":  # pragma: no cover - Windows CI
+                _win32().attach_job(proc)
+            ending = _await_child(proc, timeout)
     except KeyboardInterrupt:
         # Ctrl-C outside the wait -- while the log file is opened, or while
         # the child is being put in its job. The `finally` below still stops
@@ -428,8 +469,9 @@ def execute(
         if proc is not None:
             _terminate_absorbing_interrupts(proc)
 
-    log_bytes = log_path.read_bytes() if log_path.exists() else b""
+    log_bytes, log_note = _seal_log(log_fh, log_path)
     log_text = log_bytes.decode("utf-8", errors="replace")
+    exec_note = "; ".join(note for note in (ending.note, log_note) if note) or None
 
     return RunOutcome(
         run_dir=run_dir,
@@ -439,7 +481,7 @@ def execute(
         started_at=started_at,
         duration_s=round(time.monotonic() - t0, 3),
         timed_out=ending.timed_out,
-        exec_note=ending.note,
+        exec_note=exec_note,
         interrupted=ending.interrupted,
         log_sha256=hashlib.sha256(log_bytes).hexdigest(),
         log_size=len(log_bytes),
@@ -481,9 +523,7 @@ def update_latest(runs_dir: Path, run_dir: Path) -> None:
     # itself.
     if sys.platform != "win32" and _publish_symlink(runs_dir, run_dir):
         return
-    scratch = runs_dir / f".{LATEST_FILE}.{os.getpid()}.tmp"
-    scratch.write_text(run_dir.name + "\n", encoding="utf-8")
-    os.replace(scratch, runs_dir / LATEST_FILE)
+    write_text_atomic(runs_dir / LATEST_FILE, run_dir.name + "\n")
 
 
 def _contained_run(runs_dir: Path, name: str) -> Path | None:

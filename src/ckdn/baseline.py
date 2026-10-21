@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from ckdn._files import write_text_atomic
 from ckdn.parsers.base import Finding
 
 #: Baseline document schema identifier.
@@ -125,9 +126,13 @@ def save(path: Path, baseline: dict[str, set[str]]) -> None:
         "schema": BASELINE_SCHEMA,
         "checks": {name: sorted(fps) for name, fps in sorted(baseline.items())},
     }
-    path.write_text(
+    # Atomic: an interrupted write must not leave a torn file that every later
+    # run rejects. Resolved first: a baseline symlinked to a shared location
+    # is the user's choice, and the rename must update the target, not
+    # replace the link.
+    write_text_atomic(
+        path.resolve(),
         json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
     )
 
 

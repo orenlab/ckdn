@@ -46,7 +46,12 @@ from ckdn.config import (
     load_config,
     resolve_config_path,
 )
-from ckdn.config_lock import LOCK_NAME, verify_config, write_config_lock
+from ckdn.config_lock import (
+    LOCK_NAME,
+    lock_warnings,
+    verify_config,
+    write_config_lock,
+)
 from ckdn.digest import dump_json, dump_json_pretty
 from ckdn.preflight import diagnose
 from ckdn.runner import RC_INTERRUPTED, prune
@@ -198,6 +203,9 @@ def cmd_verify_config(args: argparse.Namespace) -> int:
     cfg = _load(args)
     lock_path = Path(args.lock_file) if args.lock_file else None
     errors = verify_config(cfg, locked=args.locked, lock_path=lock_path)
+    if args.locked:
+        for line in lock_warnings(cfg, lock_path):
+            print(f"ckdn: warning: {line}", file=sys.stderr)
     if errors:
         for line in errors:
             print(f"ckdn: {line}", file=sys.stderr)
@@ -217,8 +225,8 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     if baseline_path is None:
         return _fail('set `baseline = "…"` under [run] in ckdn.toml first')
     # Same refusal as `init` and `lock-config`, and made here so it lands
-    # before any target runs: `baseline.save` writes with a bare `write_text`,
-    # so a typo used to surface as a traceback once every check had executed.
+    # before any target runs: otherwise a typo in the directory surfaces as a
+    # traceback from `baseline.save`, once every check has already executed.
     if not baseline_path.parent.is_dir():
         return _fail(f"no such directory: {baseline_path.parent}")
     check = cfg.checks.get(args.check)
@@ -457,7 +465,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p_lock = sub.add_parser(
         "lock-config",
-        help="write ckdn.lock.toml command digests for CI governance",
+        help="write ckdn.lock.toml pinning every check and [run] policy for CI",
     )
     add_config(p_lock)
     p_lock.add_argument(

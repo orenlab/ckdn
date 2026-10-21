@@ -66,6 +66,14 @@
     "interrupted": {
       "type": "boolean",
       "description": "True when the run was cut short by SIGINT."
+    },
+    "env_keys": {
+      "type": "array",
+      "description": "Names of the variables the check's env overlay set, sorted. Values are never recorded. Absent when the check sets no env.",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
     }
   }
 }

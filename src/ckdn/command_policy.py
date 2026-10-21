@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +28,13 @@ _SENSITIVE_ROOTS: tuple[Path, ...] = (
     Path("/proc"),
     Path("/sys"),
     Path("/dev"),
+)
+
+#: Variables that make the dynamic loader inject a library into every process
+#: the check starts -- arbitrary code under any tool, so an allowlisted command
+#: would no longer pin what actually runs.
+_LOADER_INJECTION_ENV: frozenset[str] = frozenset(
+    {"LD_PRELOAD", "LD_AUDIT", "DYLD_INSERT_LIBRARIES"}
 )
 
 _HOME_SECRET_DIRS: tuple[str, ...] = (
@@ -64,8 +73,13 @@ def command_matches_allowlist(command: str, prefixes: tuple[str, ...]) -> bool:
 
 def _is_sensitive_path(resolved: Path) -> bool:
     # `is_relative_to` answers with a bool on every platform -- a foreign drive
-    # letter is simply False -- so there is nothing here to catch.
-    if any(resolved.is_relative_to(root) for root in _SENSITIVE_ROOTS):
+    # letter is simply False -- so there is nothing here to catch. The roots
+    # are compared resolved too, because the candidate is: on macOS `/etc` is
+    # a link to `/private/etc`, which the bare root never matched.
+    if any(
+        resolved.is_relative_to(root) or resolved.is_relative_to(root.resolve())
+        for root in _SENSITIVE_ROOTS
+    ):
         return True
     try:
         home = Path.home().resolve()
@@ -83,7 +97,12 @@ def _path_like_segments(value: str) -> list[str]:
     if value.startswith("-") and "=" in value:
         return _path_like_segments(value.split("=", 1)[1])
     if value.startswith("-"):
-        return []
+        # A short option may carry its value glued on: `-C/etc`, `-I../x`.
+        # The remainder is a candidate like any other token; one that does
+        # not look like a path (`-rA`, `-vv`) is ignored downstream.
+        if value.startswith("--") or len(value) <= 2:
+            return []
+        return _path_like_segments(value[2:])
     if ":" in value and not value.startswith("/") and not value.startswith("."):
         _scheme, sep, tail = value.partition(":")
         if sep and tail and (tail.startswith(("/", ".", "~")) or "/" in tail):
@@ -109,7 +128,10 @@ def _resolve_workspace_path(segment: str, cwd: Path) -> Path:
 
 
 def _validate_path_segment(segment: str, cwd: Path) -> None:
-    if not _looks_like_path(segment):
+    # A bare name is a path when the workspace has a symlink by that name:
+    # `cat notes` reads wherever `notes` points, inside the workspace or not.
+    # `islink` answers False for anything it cannot stat.
+    if not _looks_like_path(segment) and not os.path.islink(cwd / segment):
         return
     resolved = _resolve_workspace_path(segment, cwd)
     root = cwd.resolve()
@@ -140,6 +162,15 @@ def validate_command_tokens(
             _validate_path_segment(segment, root)
 
 
+def _validate_env(env: Mapping[str, str]) -> None:
+    for key in sorted(env):
+        if key.upper() in _LOADER_INJECTION_ENV:
+            raise CommandPolicyError(
+                f"env {key} loads code into every process the check starts; "
+                'it is only allowed with command_policy = "off"'
+            )
+
+
 def validate_command(
     command: str,
     *,
@@ -147,6 +178,7 @@ def validate_command(
     policy: CommandPolicy,
     tokens: list[str],
     allowlist_prefixes: tuple[str, ...] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Validate one invocation and return its argv token list.
 
@@ -154,12 +186,14 @@ def validate_command(
     ``tokens`` is the argv it was built into -- the configured command plus any
     extra arguments, after ``{run_dir}`` substitution -- and is what the path
     rules actually inspect. Only the caller can build it: substitution needs a
-    run directory this module knows nothing about. Raises
-    :class:`CommandPolicyError` when the active policy rejects the invocation.
+    run directory this module knows nothing about. ``env`` is the check's own
+    env overlay. Raises :class:`CommandPolicyError` when the active policy
+    rejects the invocation.
     """
     argv = list(tokens)
     if policy == "off":
         return argv
+    _validate_env(env or {})
 
     if policy == "allowlist":
         prefixes = effective_allowlist_prefixes(allowlist_prefixes)

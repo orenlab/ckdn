@@ -152,6 +152,11 @@ def test_meta_validates() -> None:
     _validator(META_SCHEMA).validate(meta)
     assert meta["schema"] == META_SCHEMA
 
+    with_env = build_meta(
+        check="pytest", parser="pytest", outcome=make_outcome(1), env={"A": "b"}
+    )
+    _validator(META_SCHEMA).validate(with_env)
+
 
 # --- `ckdn schema` CLI -----------------------------------------------------
 
