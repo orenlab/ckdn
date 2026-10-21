@@ -9,6 +9,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- A check can no longer alter its own evidence: `full.log` is read through
+  ckdn's own handle and re-published after the run, and `digest.json`,
+  `meta.json`, the baseline and `LATEST` are written atomically, never through
+  a planted symlink
+- `ckdn.lock.toml` also pins parsers, options, `env`, timeouts, aliases and the
+  `[run]` policy, not just commands
+- Command policy catches `-C/etc`-style glued values, symlinked bare names and
+  symlinked system roots (macOS `/etc`), and refuses `LD_PRELOAD`-style `env`
+
+### Fixed
+
+- Unaudited pip-audit packages, files bandit could not scan, and pre-commit
+  runs where every hook was skipped no longer pass; accept expected ones with
+  `allow_skipped` / `-x` / `allow_all_skipped`
+- `NaN` or out-of-range coverage rates and pylint scores no longer pass
+- Long lines cut by `get_evidence` are marked (`lines_cut`)
+- A bad per-check `top` or a check name with `/` is a config error, not a
+  crash that left a run without a digest
+
+### Changed
+
+- `meta.json` lists the check's env variable names (`env_keys`)
+
+### Deprecated
+
+- Lock files from older ckdn still verify commands, with a warning; re-run
+  `ckdn lock-config`
+
 ## [1.3.6] - 2026-10-21
 
 ### Security
