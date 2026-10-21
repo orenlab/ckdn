@@ -25,6 +25,7 @@ Options: ``fail_under`` (float, recommended), ``coverage_xml``, ``junit``,
 
 from __future__ import annotations
 
+import math
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -117,6 +118,17 @@ class CoverageXmlParser:
 
         line_rate = _num(root, "line-rate", float, 0.0)
         branch_rate = _num(root, "branch-rate", float, 0.0)
+        # `float()` accepts "NaN" and "inf", and every comparison with NaN is
+        # false -- a report saying `line-rate="NaN"` sailed past any gate.
+        if not all(0.0 <= rate <= 1.0 for rate in (line_rate, branch_rate)):
+            return ParseResult(
+                parser_ok=False,
+                notes=[
+                    "coverage XML line-rate/branch-rate is not a fraction "
+                    f"between 0 and 1 ({root.get('line-rate')!r}, "
+                    f"{root.get('branch-rate')!r}); unexpected format"
+                ],
+            )
         line_percent = round(line_rate * 100, 2)
         preview = int(ctx.options.get("missing_lines_preview", 40))
         files = _collect_files(root, preview)
@@ -137,6 +149,10 @@ class CoverageXmlParser:
             result.notes.append(
                 "no `fail_under` configured for this check; coverage gate skipped"
             )
+        elif not math.isfinite(float(fail_under)):
+            # `fail_under = nan` would make the comparison below always false.
+            result.parser_ok = False
+            result.notes.append("`fail_under` must be a finite number")
         elif line_percent < float(fail_under):
             result.gate_failures.append(
                 f"line coverage {line_percent}% is below "

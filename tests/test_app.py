@@ -608,21 +608,44 @@ def test_slice_artifact_lines_edges_and_cap(tmp_path: Path) -> None:
     p = tmp_path / "a.log"
     # CRLF + LF, no trailing newline.
     p.write_bytes(b"a\r\nb\nc")
-    assert _slice_artifact_lines(p, 0, 10) == (["a", "b", "c"], 3)
+    assert _slice_artifact_lines(p, 0, 10) == (["a", "b", "c"], 3, 0)
     # Empty file → no lines.
     p.write_bytes(b"")
-    assert _slice_artifact_lines(p, 0, 10) == ([], 0)
+    assert _slice_artifact_lines(p, 0, 10) == ([], 0, 0)
     # Trailing newline does not fabricate an extra line.
     p.write_bytes(b"x\ny\n")
-    assert _slice_artifact_lines(p, 0, 10) == (["x", "y"], 2)
+    assert _slice_artifact_lines(p, 0, 10) == (["x", "y"], 2, 0)
     # A lone blank line is one empty line.
     p.write_bytes(b"\n")
-    assert _slice_artifact_lines(p, 0, 10) == ([""], 1)
-    # A single unbounded line is length-capped, not loaded whole.
-    p.write_bytes(b"z" * (_MAX_EVIDENCE_LINE_BYTES + 5000))
-    lines, total = _slice_artifact_lines(p, 0, 10)
-    assert total == 1
-    assert len(lines[0]) == _MAX_EVIDENCE_LINE_BYTES
+    assert _slice_artifact_lines(p, 0, 10) == ([""], 1, 0)
+    # A single unbounded line is length-capped, not loaded whole -- and says so.
+    full = _MAX_EVIDENCE_LINE_BYTES + 5000
+    p.write_bytes(b"z" * full + b"\nshort\n")
+    lines, total, cut = _slice_artifact_lines(p, 0, 10)
+    assert total == 2
+    assert cut == 1
+    assert lines[0] == "z" * _MAX_EVIDENCE_LINE_BYTES + (
+        f" … [line cut: first {_MAX_EVIDENCE_LINE_BYTES} of {full} bytes]"
+    )
+    assert lines[1] == "short"
+    # A cut line outside the window is not counted.
+    assert _slice_artifact_lines(p, 1, 10) == (["short"], 2, 0)
+
+
+def test_get_evidence_reports_cut_lines(tmp_path: Path) -> None:
+    from ckdn.app.queries import _MAX_EVIDENCE_LINE_BYTES
+
+    cfg = _load_cfg(tmp_path, '[check.g]\ncommand = "true"\nparser = "generic"\n')
+    run_dir = tmp_path / ".agent-runs" / "20260101T000000Z-g"
+    run_dir.mkdir(parents=True)
+    (run_dir / "digest.json").write_text('{"check": "g"}', encoding="utf-8")
+    (run_dir / LOG_NAME).write_bytes(b"q" * (_MAX_EVIDENCE_LINE_BYTES + 1) + b"\n")
+    block = get_evidence(cfg, ref=run_dir.name, artifact=LOG_NAME)["artifact"]
+    assert block["truncated"] is False  # paging: nothing beyond the window
+    assert block["lines_cut"] == 1
+    assert block["lines"][0].endswith("bytes]")
+    short = get_evidence(cfg, ref=run_dir.name, artifact="digest.json")["artifact"]
+    assert "lines_cut" not in short
 
 
 def test_list_runs_limit_capped(
@@ -1014,6 +1037,19 @@ def test_a_result_carries_an_empty_fingerprint_set_by_default() -> None:
         check="x", status="pass", rc=0, run_dir=Path("."), digest={}, exit_code=0
     )
     assert result.fingerprints == frozenset()
+
+
+def test_a_run_directory_that_cannot_be_created_is_an_app_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _load_cfg(tmp_path, '[check.ok]\ncommand = "true"\nparser = "generic"\n')
+
+    def _refuse(runs_dir: Path, check: str) -> Path:
+        raise OSError(36, "File name too long")
+
+    monkeypatch.setattr(app_run, "create_run_dir", _refuse)
+    with pytest.raises(AppError, match="cannot create a run directory for check 'ok'"):
+        run_one(cfg, cfg.checks["ok"], extra=[])
 
 
 def test_meta_names_the_env_the_command_received(tmp_path: Path) -> None:

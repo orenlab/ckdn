@@ -18,6 +18,9 @@ Guards:
 1. A nonzero exit code with zero parsed failed hooks flips ``parser_ok`` off.
 2. A zero exit code with parsed failed hooks is left to the reconciler as
    ``parse_mismatch``.
+3. A run in which no hook ran -- every hook ``Skipped``, or none at all --
+   checked nothing, and fails the gate. Option ``allow_all_skipped = true``
+   accepts it (e.g. ``pre-commit run`` on staged files only).
 """
 
 from __future__ import annotations
@@ -99,6 +102,17 @@ class PreCommitTextParser:
         }
         result = ParseResult(findings=findings, summary=summary)
         self._verify(ctx, result, len(failed), len(hooks))
+        ran = len(failed) + sum(1 for hook in hooks if hook.result == "Passed")
+        if (
+            result.parser_ok
+            and not ran
+            and ctx.options.get("allow_all_skipped") is not True
+        ):
+            result.gate_failures.append(
+                "no pre-commit hook ran (every hook was skipped, or none is "
+                "configured), so nothing was checked; set "
+                "`allow_all_skipped = true` if that is expected"
+            )
         return result
 
     @staticmethod

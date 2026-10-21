@@ -261,7 +261,14 @@ def _run_atomic(
     ``accepted`` is the already-loaded baseline (``None`` when none is
     configured), read by :func:`run_one` before this ran.
     """
-    run_dir = create_run_dir(cfg.runs_dir, check.name)
+    try:
+        run_dir = create_run_dir(cfg.runs_dir, check.name)
+    except OSError as exc:
+        # Nothing has run and there is nowhere to put a digest: say why,
+        # instead of a traceback (a name the filesystem refuses, a full disk).
+        raise AppError(
+            f"cannot create a run directory for check '{check.name}': {exc}"
+        ) from exc
     tokens = build_tokens(command, run_dir, extra)
     run_env = {
         key: value.replace("{run_dir}", str(run_dir))

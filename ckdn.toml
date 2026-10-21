@@ -78,6 +78,7 @@ parser = "reformat"
 command = "uv run pre-commit run --all-files"
 parser = "pre_commit"
 timeout = 600
+# allow_all_skipped = true  # accept a run in which every hook was skipped
 # # pre-push stage: add --hook-stage pre-push
 # # single hook: uv run pre-commit run <hook-id> --all-files
 
@@ -108,6 +109,9 @@ members = ["pre_commit"]
 # timeout = 120
 # top = 20
 # report = "pip-audit.json"
+# # packages pip-audit cannot audit (e.g. your own, not on PyPI) fail the
+# # check unless accepted here:
+# allow_skipped = ["your-project"]
 
 # [check.bandit]
 # command = "uv run bandit -r src -f json -o {run_dir}/bandit.json"

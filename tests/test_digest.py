@@ -190,6 +190,13 @@ def test_prune_summary_drops_zeros() -> None:
     assert prune_summary({"ok": False, "dirty": True}) == {"dirty": True}
 
 
+def test_prune_summary_drops_values_json_cannot_carry() -> None:
+    """NaN/inf made `dump_json` write `NaN`, which strict JSON readers reject."""
+    summary = {"rate": float("nan"), "top": float("inf"), "ok": 1.5}
+    assert prune_summary(summary) == {"ok": 1.5}
+    assert "NaN" not in dump_json({"summary": prune_summary(summary)})
+
+
 def test_alias_aggregate_sparse() -> None:
     agg = build_alias_aggregate(
         alias="lint",

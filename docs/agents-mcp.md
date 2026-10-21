@@ -206,7 +206,9 @@ Passing `artifact` adds one block and changes nothing else:
 ```
 
 `offset` and `limit` echo the clamped values actually used, and `truncated` is
-`offset + limit < total_lines` — so an agent can page without guessing.
+`offset + limit < total_lines` — so an agent can page without guessing. A line
+longer than 64 KiB is cut: it ends in `… [line cut: first 65536 of N bytes]`,
+and `lines_cut` counts such lines in the page.
 
 ### Trust rules
 

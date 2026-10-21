@@ -23,6 +23,7 @@ Optional ``score_fail_under`` gate mirrors coverage's ``fail_under``.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ckdn.parsers.base import (
@@ -170,6 +171,13 @@ class PylintJsonParser:
         except (TypeError, ValueError):
             result.parser_ok = False
             result.notes.append("pylint score or score_fail_under is not numeric")
+            return
+        if not (math.isfinite(score_f) and math.isfinite(under)):
+            # NaN compares false against everything: the gate would never fire.
+            result.parser_ok = False
+            result.notes.append(
+                "pylint score or score_fail_under is not a finite number"
+            )
             return
         if score_f < under:
             result.gate_failures.append(

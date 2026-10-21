@@ -207,7 +207,9 @@ def get_evidence(
     line_offset = max(0, offset)
     line_limit = min(max(1, limit), MAX_EVIDENCE_LIMIT)
     path = _safe_artifact_path(run_dir, artifact)
-    sliced, total_lines = _slice_artifact_lines(path, line_offset, line_limit)
+    sliced, total_lines, lines_cut = _slice_artifact_lines(
+        path, line_offset, line_limit
+    )
     payload["artifact"] = {
         "name": artifact,
         "offset": line_offset,
@@ -216,23 +218,35 @@ def get_evidence(
         "truncated": line_offset + line_limit < total_lines,
         "lines": sliced,
     }
+    if lines_cut:
+        # `truncated` is about paging; a line cut short is a different loss,
+        # and each such line also ends in a marker saying how much is missing.
+        payload["artifact"]["lines_cut"] = lines_cut
     return payload
 
 
-def _slice_artifact_lines(path: Path, offset: int, limit: int) -> tuple[list[str], int]:
-    """Stream ``path`` and return ``(window, total_lines)``.
+def _cut_marker(full_bytes: int) -> str:
+    return f" … [line cut: first {_MAX_EVIDENCE_LINE_BYTES} of {full_bytes} bytes]"
+
+
+def _slice_artifact_lines(
+    path: Path, offset: int, limit: int
+) -> tuple[list[str], int, int]:
+    """Stream ``path`` and return ``(window, total_lines, lines_cut)``.
 
     Only the ``[offset, offset + limit)`` window is retained, and each retained
     line is capped at ``_MAX_EVIDENCE_LINE_BYTES``, so neither a huge file nor a
-    single unbounded line can be pulled into memory in full. Line splitting
-    matches ``str.splitlines`` for ``\\n`` (and trims a trailing ``\\r`` so CRLF
-    logs read cleanly).
+    single unbounded line can be pulled into memory in full. A capped line
+    says so (see :func:`_cut_marker`) and is counted in ``lines_cut``. Line
+    splitting matches ``str.splitlines`` for ``\\n`` (and trims a trailing
+    ``\\r`` so CRLF logs read cleanly).
     """
     end = offset + limit
-    window: list[bytes] = []
+    window: list[tuple[bytes, int]] = []
     total = 0
     idx = 0
     cur = bytearray()
+    cur_len = 0
     line_nonempty = False
     keeping = offset <= idx < end
 
@@ -245,6 +259,7 @@ def _slice_artifact_lines(path: Path, offset: int, limit: int) -> tuple[list[str
                 seg_end = size if nl == -1 else nl
                 if seg_end > pos:
                     line_nonempty = True
+                    cur_len += seg_end - pos
                     if keeping and len(cur) < _MAX_EVIDENCE_LINE_BYTES:
                         room = _MAX_EVIDENCE_LINE_BYTES - len(cur)
                         cur += chunk[pos : min(seg_end, pos + room)]
@@ -252,9 +267,10 @@ def _slice_artifact_lines(path: Path, offset: int, limit: int) -> tuple[list[str
                     break
                 total += 1
                 if keeping:
-                    window.append(bytes(cur))
+                    window.append((bytes(cur), cur_len))
                 idx += 1
                 cur = bytearray()
+                cur_len = 0
                 line_nonempty = False
                 keeping = offset <= idx < end
                 pos = nl + 1
@@ -263,7 +279,14 @@ def _slice_artifact_lines(path: Path, offset: int, limit: int) -> tuple[list[str
     if line_nonempty:
         total += 1
         if keeping:
-            window.append(bytes(cur))
+            window.append((bytes(cur), cur_len))
 
-    decoded = [b.decode("utf-8", errors="replace").removesuffix("\r") for b in window]
-    return decoded, total
+    decoded: list[str] = []
+    cut = 0
+    for kept, full_len in window:
+        text = kept.decode("utf-8", errors="replace").removesuffix("\r")
+        if full_len > len(kept):
+            cut += 1
+            text += _cut_marker(full_len)
+        decoded.append(text)
+    return decoded, total, cut

@@ -15,11 +15,11 @@ Prefer machine-readable artifacts over terminal text.
 | `mypy`       | text, or NDJSON with `format = "json"` | `--output json` (mypy ≥ 1.11) for NDJSON                                                                                                                                               |
 | `pyright`    | JSON in log                            | `--outputjson`                                                                                                                                                                         |
 | `reformat`   | black / ruff-format text               | `--check` (no `--diff`). ruff ≥ 0.16 is read in its `full` (default), `concise` and `grouped` output formats, older ruff and black in theirs                                            |
-| `pip_audit`  | JSON file                              | `--progress-spinner off -f json -o {run_dir}/pip-audit.json`; set a `timeout` (network tool). Skipped packages are a note, not a failure, and findings carry no `location`              |
-| `bandit`     | JSON file                              | `-f json -o {run_dir}/bandit.json`                                                                                                                                                     |
+| `pip_audit`  | JSON file                              | `--progress-spinner off -f json -o {run_dir}/pip-audit.json`; set a `timeout` (network tool). Findings carry no `location`; a package pip-audit could not audit fails the gate unless listed in `allow_skipped` |
+| `bandit`     | JSON file                              | `-f json -o {run_dir}/bandit.json`; a file bandit could not scan fails the gate (exclude it with `-x`)                                                                                  |
 | `pylint`     | json2 (pylint ≥ 3.0)                   | `--output-format=json2:{run_dir}/pylint.json` — every message class except `info` becomes a finding, refactor and convention included; narrow it in pylint's own config, not in ckdn    |
 | `sarif`      | SARIF file                             | whatever flag writes SARIF to `{run_dir}/report.sarif` (semgrep `--sarif-output` **plus `--error`**, gitleaks `--report-format sarif --report-path`, trivy `--format sarif -o` **plus `--exit-code 1`**) |
-| `pre_commit` | `pre-commit run` terminal text         | `pre-commit run` (use `--all-files` for full-repo parity); per-hook findings on failure                                                                                                |
+| `pre_commit` | `pre-commit run` terminal text         | `pre-commit run` (use `--all-files` for full-repo parity); per-hook findings on failure. A run where no hook ran fails the gate unless `allow_all_skipped = true`                     |
 | `generic`    | exit code only                         | — no findings by construction, so `rc ≠ 0` reconciles to `fail` with the log tail attached, never to `error`                                                                            |
 
 **Paths.** `ruff` and `pyright` report absolute paths; their findings carry
@@ -47,6 +47,14 @@ unreadable report is `error` when `rc ≠ 0` and **`parse_mismatch` when
 (pylint). Each turns a run red even when the tool exits 0, and each is **opt-in
 and silently skipped when unset** — a `coverage` check with no `fail_under`
 reports `pass` at any percentage, with a note saying the gate was skipped.
+A coverage rate or pylint score that is not a real number (`NaN`, `inf`, a
+rate above 1) is `parse_mismatch`, never a pass.
+
+**Incomplete evidence fails the gate.** What the tool itself says it did not
+check is not clean: packages `pip_audit` could not audit, files `bandit` could
+not scan, a `pre_commit` run in which every hook was skipped. Accept the
+expected ones explicitly — `allow_skipped = ["your-project"]` (or `true`),
+bandit's own `-x`, `allow_all_skipped = true`.
 
 SARIF's `fail_levels` is **not** a gate: it selects which result levels become
 findings and can never produce a gate failure. It defaults to `["error"]`, and a
