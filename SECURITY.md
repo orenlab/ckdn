@@ -6,10 +6,12 @@ SPDX-License-Identifier: MIT
 
 ## Supported versions
 
-| Version  | Supported |
-|----------|-----------|
-| 1.x      | Yes       |
-| &lt; 1.0 | No        |
+| Version  | Supported          |
+|----------|--------------------|
+| 1.4.x    | Yes                |
+| &lt; 1.4 | No (end of life)   |
+
+Fixes land in the latest release only; upgrade to receive them.
 
 ## Reporting a vulnerability
 
