@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-21
 
 ### Security
 
@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Lock files from older ckdn still verify commands, with a warning; re-run
   `ckdn lock-config`
+- Versions before 1.4 are end of life and get no security fixes
 
 ## [1.3.6] - 2026-10-21
 
@@ -326,7 +327,8 @@ MCP tools are identical to 1.3.0, and the core stays stdlib-only.
 - Application facade (`ckdn.app`) shared by CLI and MCP so reconcile/digest
   semantics stay single-sourced
 
-[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.3.6...HEAD
+[Unreleased]: https://github.com/orenlab/ckdn/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/orenlab/ckdn/compare/v1.3.6...v1.4.0
 [1.3.6]: https://github.com/orenlab/ckdn/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/orenlab/ckdn/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/orenlab/ckdn/compare/v1.3.3...v1.3.4
