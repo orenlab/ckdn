@@ -51,6 +51,10 @@ ckdn-mcp = "ckdn.mcp.server:main"
 [project.optional-dependencies]
 mcp = [
     "fastmcp>=3.4.9",
+    # Security floor for a transitive dependency (GHSA-6q48-6c7w-9gw2): the
+    # fastmcp 3.x line reaches certifi through httpx with no lower bound, so
+    # an environment that already holds an older bundle would keep it.
+    "certifi>=2026.10.19",
 ]
 dev = [
     "mypy>=2.4.0",
