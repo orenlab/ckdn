@@ -335,11 +335,13 @@ dev = [
     { name = "ty" },
 ]
 mcp = [
+    { name = "certifi" },
     { name = "fastmcp" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", marker = "extra == 'mcp'", specifier = ">=2026.10.19" },
     { name = "codeclone", extras = ["mcp"], marker = "extra == 'dev'", specifier = "==2.1.0a1" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.4.9" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.20" },
