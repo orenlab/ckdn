@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer switch the gate off
 - `ckdn gc` keeps a run whose `digest.json` is not a JSON object, and its log
 
+### Changed
+
+- Dependencies refreshed
+
 ### Deprecated
 
 - 1.4.0 is end of life: it has the issues fixed here

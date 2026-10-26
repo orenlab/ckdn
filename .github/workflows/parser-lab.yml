@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       # No cache: `latest` must resolve today's releases, not last week's.
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: false
           python-version: "3.13"
