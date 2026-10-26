@@ -8,8 +8,8 @@ SPDX-License-Identifier: MIT
 
 | Version  | Supported          |
 |----------|--------------------|
-| 1.4.x    | Yes                |
-| &lt; 1.4 | No (end of life)   |
+| ≥ 1.4.1  | Yes                |
+| ≤ 1.4.0  | No (end of life)   |
 
 Fixes land in the latest release only; upgrade to receive them.
 
