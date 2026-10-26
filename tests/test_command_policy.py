@@ -475,6 +475,51 @@ def test_a_value_glued_to_a_short_option_is_still_a_path(
         )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX absolute paths")
+def test_a_value_glued_after_several_option_letters_is_still_a_path(
+    tmp_path: Path,
+) -> None:
+    """`tar -cf/tmp/x` is `-c -f /tmp/x`: the value starts after two letters,
+    and reading it after the first (`f/tmp/x`) kept it inside the workspace."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    outside = tmp_path / "outside.tar"
+    for token in (f"-cf{outside}", "-cf~/x.tar", "-xzf../../x.tar"):
+        with pytest.raises(CommandPolicyError, match="escapes workspace"):
+            validate_command(
+                f"tar {token} x", cwd=ws, policy="workspace", tokens=["tar", token, "x"]
+            )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privilege on Windows")
+def test_a_symlink_glued_after_several_option_letters_is_refused(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "archive").symlink_to(tmp_path / "outside.tar")
+    with pytest.raises(CommandPolicyError, match="escapes workspace"):
+        validate_command(
+            "tar -cfarchive x",
+            cwd=ws,
+            policy="workspace",
+            tokens=["tar", "-cfarchive", "x"],
+        )
+
+
+@pytest.mark.parametrize(
+    "token", ["-Isrc/include", "-cconfigs/pytest.ini", "-Wl,-rpath,lib", "-ofile.txt"]
+)
+def test_a_glued_relative_path_is_not_misread_as_an_absolute_one(
+    tmp_path: Path, token: str
+) -> None:
+    """`-Isrc/include` must not be read as `-Isrc` plus `/include`: a later
+    split is only checked where it could actually leave the workspace."""
+    validate_command(
+        f"cc {token}", cwd=tmp_path, policy="workspace", tokens=["cc", token]
+    )
+
+
 @pytest.mark.parametrize("command", ["pytest -rA -vv -x", "pytest -k slow", "ls -"])
 def test_flag_clusters_are_not_mistaken_for_paths(tmp_path: Path, command: str) -> None:
     validate_command(command, cwd=tmp_path, policy="workspace", tokens=command.split())

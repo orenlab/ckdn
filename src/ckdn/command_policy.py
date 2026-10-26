@@ -97,17 +97,47 @@ def _path_like_segments(value: str) -> list[str]:
     if value.startswith("-") and "=" in value:
         return _path_like_segments(value.split("=", 1)[1])
     if value.startswith("-"):
-        # A short option may carry its value glued on: `-C/etc`, `-I../x`.
-        # The remainder is a candidate like any other token; one that does
-        # not look like a path (`-rA`, `-vv`) is ignored downstream.
         if value.startswith("--") or len(value) <= 2:
             return []
-        return _path_like_segments(value[2:])
+        return [
+            seg for glued in _glued_values(value) for seg in _path_like_segments(glued)
+        ]
     if ":" in value and not value.startswith("/") and not value.startswith("."):
         _scheme, sep, tail = value.partition(":")
         if sep and tail and (tail.startswith(("/", ".", "~")) or "/" in tail):
             return _path_like_segments(tail)
     return [value]
+
+
+def _glued_values(option: str) -> list[str]:
+    """Where the value glued to a short-option cluster may begin.
+
+    `-C/etc` carries its value after one option letter, `tar -cf/tmp/x` after
+    two (`-c -f /tmp/x`), and nothing in the token says how many letters are
+    options. So every place the letters could end is a candidate. The first
+    is taken as is; later ones only when they could leave the workspace -- an
+    absolute path into a directory that exists, a home or parent reference,
+    or a bare name (a symlink by that name is caught downstream) -- so that
+    `-Isrc/include` is not misread as `/include`. A candidate that does not
+    look like a path (`-rA`, `-vv`) is ignored downstream.
+    """
+    values = [option[2:]]
+    for end in range(3, len(option)):
+        if not option[end - 1].isalpha():
+            break
+        rest = option[end:]
+        if _could_leave_workspace(rest):
+            values.append(rest)
+    return values
+
+
+def _could_leave_workspace(value: str) -> bool:
+    if value.startswith(("~", "..")):
+        return True
+    if "/" not in value and "\\" not in value:
+        return True
+    path = Path(value)
+    return path.is_absolute() and os.path.lexists(Path(*path.parts[:2]))
 
 
 def _looks_like_path(segment: str) -> bool:
