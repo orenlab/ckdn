@@ -155,9 +155,9 @@ absolute paths outside cwd are rejected by that containment check. A second,
 narrower denylist — `/etc`, `/proc`, `/sys`, `/dev` and `~/.ssh`, `~/.aws`,
 `~/.gnupg`, `~/.netrc`, `~/.docker`, `~/.kube` — applies to paths that pass
 containment, so it only bites when cwd is itself inside one of them. MCP
-`extra_args` are subject to the same rules. A value glued to a short option
-(`-C/etc`) is checked like any other token, and so is a bare name that is a
-symlink in the workspace.
+`extra_args` are subject to the same rules. A value glued to short options
+is checked wherever the option letters could end (`-C/etc`, `tar -cf/tmp/x`),
+and a bare name that is a symlink in the workspace is checked too.
 
 The three settings are not a spectrum from loose to strict:
 
