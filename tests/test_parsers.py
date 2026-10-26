@@ -755,6 +755,46 @@ def test_pip_audit_reads_report(tmp_path: Path) -> None:
     assert "local-pkg: not on index" in result.notes
 
 
+JUNIT_FAILING = (
+    '<testsuite{ns} tests="2" failures="1"><testcase classname="m" name="ok"/>'
+    '<testcase classname="m" name="t"><failure message="boom">E boom</failure>'
+    "</testcase></testsuite>"
+)
+
+
+@pytest.mark.parametrize("ns", [' xmlns="urn:junit"', ' xmlns:j="urn:j"', ""])
+def test_junit_in_a_namespace_reads_like_any_other(tmp_path: Path, ns: str) -> None:
+    """A default namespace hid the <failure> and its suite's counts together,
+    so both sides of the guard read zero and a failing report came out pass."""
+    (tmp_path / "junit.xml").write_text(JUNIT_FAILING.format(ns=ns), encoding="utf-8")
+    result = PytestJUnitParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok
+    assert [(f.id, f.kind, f.message) for f in result.findings] == [
+        ("m::t", "test_failure", "boom")
+    ]
+    assert result.summary["counts"]["failures"] == 1
+    assert reconcile(0, result)[0] == "parse_mismatch"
+    assert reconcile(1, result)[0] == "fail"
+
+
+def test_a_namespaced_testsuites_wrapper_is_read_too(tmp_path: Path) -> None:
+    doc = f'<testsuites xmlns="urn:junit">{JUNIT_FAILING.format(ns="")}</testsuites>'
+    (tmp_path / "junit.xml").write_text(doc, encoding="utf-8")
+    result = PytestJUnitParser().parse(ctx(tmp_path, rc=1))
+    assert result.parser_ok
+    assert len(result.findings) == 1
+
+
+@pytest.mark.parametrize("doc", ["<report/>", '<x:results xmlns:x="urn:x"/>'])
+def test_a_report_that_is_not_junit_is_untrusted(tmp_path: Path, doc: str) -> None:
+    """An XML file with no suite in it read as an empty, clean run."""
+    (tmp_path / "junit.xml").write_text(doc, encoding="utf-8")
+    result = PytestJUnitParser().parse(ctx(tmp_path, rc=0))
+    assert result.parser_ok is False
+    assert "not <testsuite> or <testsuites>" in result.notes[0]
+    assert reconcile(0, result)[0] == "parse_mismatch"
+
+
 # Captured from pip-audit 2.10.1 on a venv holding a private editable project:
 # a package it could not audit sits in `dependencies`, with no `vulns` and no
 # top-level `skipped` array anywhere in the report.
@@ -1735,6 +1775,25 @@ def test_coverage_rate_that_is_not_a_fraction_is_untrusted(
     assert reconcile(0, result)[0] == "parse_mismatch"
 
 
+@pytest.mark.parametrize("threshold", [False, True, "ninety", [90]])
+def test_coverage_threshold_must_be_a_real_number(
+    tmp_path: Path, threshold: object
+) -> None:
+    """`fail_under = false` quietly meant 0, and no coverage is below 0."""
+    xml = COVERAGE_XML.replace('line-rate="0.8"', 'line-rate="0.1"')
+    (tmp_path / "coverage.xml").write_text(xml, encoding="utf-8")
+    result = CoverageXmlParser().parse(ctx(tmp_path, rc=0, fail_under=threshold))
+    assert result.parser_ok is False
+    assert "`fail_under` must be a finite number" in result.notes
+    assert reconcile(0, result)[0] == "parse_mismatch"
+
+
+def test_coverage_threshold_written_as_a_string_still_works(tmp_path: Path) -> None:
+    (tmp_path / "coverage.xml").write_text(COVERAGE_XML, encoding="utf-8")
+    result = CoverageXmlParser().parse(ctx(tmp_path, rc=0, fail_under="90"))
+    assert result.gate_failures == ["line coverage 80.0% is below fail_under=90.0%"]
+
+
 def test_coverage_nan_threshold_is_refused(tmp_path: Path) -> None:
     (tmp_path / "coverage.xml").write_text(COVERAGE_XML, encoding="utf-8")
     result = CoverageXmlParser().parse(ctx(tmp_path, rc=0, fail_under=float("nan")))
@@ -1768,8 +1827,8 @@ def test_pylint_score_gate_fails(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("score", "under"),
-    [(float("nan"), 9.0), (9.5, float("nan"))],
-    ids=["score", "gate"],
+    [(float("nan"), 9.0), (9.5, float("nan")), (9.5, True), (True, 9.0), (9.5, False)],
+    ids=["nan-score", "nan-gate", "true-gate", "true-score", "false-gate"],
 )
 def test_pylint_non_finite_score_or_threshold_is_untrusted(
     tmp_path: Path, score: float, under: float
@@ -2079,7 +2138,7 @@ def test_pylint_ignores_unusable_statistics(tmp_path: Path) -> None:
     # The count cross-check is skipped, but a non-numeric score is loud: the
     # gate cannot be evaluated, so the parse is not trustworthy.
     assert result.parser_ok is False
-    assert any("not numeric" in n for n in result.notes)
+    assert any("not a finite number" in n for n in result.notes)
 
 
 def test_pytest_junit_declared_count_mismatch_flips_parser_ok(tmp_path: Path) -> None:

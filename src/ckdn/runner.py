@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -586,6 +587,19 @@ def list_run_dirs(runs_dir: Path) -> list[Path]:
     )
 
 
+def _finished(run_dir: Path) -> bool:
+    """Whether the run wrote its digest: a file that parses as a JSON object.
+
+    ckdn publishes the digest atomically, so anything else -- an empty or torn
+    file -- was not written by a run that finished, and its evidence is kept.
+    """
+    try:
+        doc = json.loads((run_dir / DIGEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(doc, dict)
+
+
 def prune(runs_dir: Path, keep: int) -> int:
     """Remove oldest *finished* run directories beyond ``keep``.
 
@@ -597,7 +611,7 @@ def prune(runs_dir: Path, keep: int) -> int:
     """
     if keep <= 0:
         return 0
-    finished = [d for d in list_run_dirs(runs_dir) if (d / DIGEST_NAME).exists()]
+    finished = [d for d in list_run_dirs(runs_dir) if _finished(d)]
     removed = 0
     for old in finished[: max(0, len(finished) - keep)]:
         shutil.rmtree(old, ignore_errors=True)

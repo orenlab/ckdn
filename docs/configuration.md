@@ -59,8 +59,9 @@ down *every* command — not just the alias that made it.
 - `runs_dir = ".agent-runs"` — where run artifacts live. Relative paths
   resolve from cwd.
 - `keep = 20` — how many *finished* run directories `runs_dir` retains, across
-  all checks. An unfinished run is never pruned, so a fast check cannot delete
-  a slow one's directory out from under it.
+  all checks. An unfinished run — no `digest.json`, or one that is not a JSON
+  object — is never pruned, so a fast check cannot delete a slow one's
+  directory out from under it.
 - `top = 20` — max findings listed in a digest; a check may override it.
 - `max_snippet_lines = 12` — max detail lines per finding.
 - `log_tail_lines = 40` — how many log lines a digest carries when it includes

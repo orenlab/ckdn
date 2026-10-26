@@ -42,13 +42,16 @@ own declared counts against what was parsed, and the text parsers (`ty`,
 `mypy`, `reformat`, `pre_commit`) check counts and clean markers. A missing or
 unreadable report is `error` when `rc ≠ 0` and **`parse_mismatch` when
 `rc == 0`** — the more surprising half. `parser_ok=false` on format drift.
+JUnit is read by element name whatever its XML namespace; a file whose root is
+not `<testsuite>` or `<testsuites>` is not a report.
 
 **Policy gates in ckdn config:** `fail_under` (coverage) and `score_fail_under`
 (pylint). Each turns a run red even when the tool exits 0, and each is **opt-in
 and silently skipped when unset** — a `coverage` check with no `fail_under`
 reports `pass` at any percentage, with a note saying the gate was skipped.
 A coverage rate or pylint score that is not a real number (`NaN`, `inf`, a
-rate above 1) is `parse_mismatch`, never a pass.
+rate above 1) is `parse_mismatch`, never a pass — and so is a threshold that
+is not one (`fail_under = false`).
 
 **Incomplete evidence fails the gate.** What the tool itself says it did not
 check is not clean: packages `pip_audit` could not audit, files `bandit` could

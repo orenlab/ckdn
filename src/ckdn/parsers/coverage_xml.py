@@ -25,12 +25,11 @@ Options: ``fail_under`` (float, recommended), ``coverage_xml``, ``junit``,
 
 from __future__ import annotations
 
-import math
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ckdn.parsers.base import ParseContext, ParseResult
+from ckdn.parsers.base import ParseContext, ParseResult, finite_number
 from ckdn.parsers.pytest_junit import parse_junit
 
 _T = TypeVar("_T")
@@ -149,14 +148,14 @@ class CoverageXmlParser:
             result.notes.append(
                 "no `fail_under` configured for this check; coverage gate skipped"
             )
-        elif not math.isfinite(float(fail_under)):
-            # `fail_under = nan` would make the comparison below always false.
+        elif (under := finite_number(fail_under)) is None:
+            # `nan` would make the comparison below always false, and `false`
+            # would quietly mean 0.
             result.parser_ok = False
             result.notes.append("`fail_under` must be a finite number")
-        elif line_percent < float(fail_under):
+        elif line_percent < under:
             result.gate_failures.append(
-                f"line coverage {line_percent}% is below "
-                f"fail_under={float(fail_under)}%"
+                f"line coverage {line_percent}% is below fail_under={under}%"
             )
         result.summary["fail_under"] = fail_under
 

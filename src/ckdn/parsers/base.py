@@ -21,6 +21,7 @@ is never allowed to look green when the parser disagrees.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -154,6 +155,24 @@ class Parser(Protocol):
     name: str
 
     def parse(self, ctx: ParseContext) -> ParseResult: ...
+
+
+def finite_number(value: object) -> float | None:
+    """``value`` as a real number, or ``None`` when it is not one.
+
+    For gate thresholds and the measurements compared with them. A boolean is
+    refused although ``float(True)`` is ``1.0`` -- in TOML or JSON it is
+    always a mistake, and ``fail_under = false`` silently meant 0 -- and so
+    are NaN and infinity, which compare false with everything and so would
+    never trip a gate.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def clamp(lines: list[str], limit: int) -> list[str]:

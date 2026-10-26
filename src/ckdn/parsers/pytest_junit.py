@@ -12,6 +12,12 @@ Self-consistency guard: the number of extracted findings is cross-checked
 against the counts declared in the ``<testsuite>`` attributes. Any
 disagreement flips ``parser_ok`` off -- ckdn fails loudly rather than
 reporting a partially-parsed result as truth.
+
+Elements are matched by local name, so a report in an XML namespace reads
+like any other. Matching the bare tag made a namespaced ``<failure>`` and
+its suite's counts invisible together: both sides of the guard read zero,
+and a failing report came out ``pass``. A root that is neither
+``<testsuite>`` nor ``<testsuites>`` is not a JUnit report at all.
 """
 
 from __future__ import annotations
@@ -31,6 +37,15 @@ def _snippet(text: str, limit: int) -> tuple[str, ...]:
     return tuple(clamp(chosen, limit))
 
 
+def _local(tag: str) -> str:
+    """``{urn:x}testcase`` -> ``testcase``."""
+    return tag.rpartition("}")[2]
+
+
+def _named(root: ET.Element, name: str) -> list[ET.Element]:
+    return [el for el in root.iter() if _local(el.tag) == name]
+
+
 def parse_junit(junit_text: str, max_snippet_lines: int) -> ParseResult:
     """Parse JUnit XML content into a ParseResult (shared with coverage)."""
     try:
@@ -39,8 +54,16 @@ def parse_junit(junit_text: str, max_snippet_lines: int) -> ParseResult:
         return ParseResult(
             parser_ok=False, notes=[f"junit report is not valid XML: {exc}"]
         )
+    if _local(root.tag) not in ("testsuite", "testsuites"):
+        return ParseResult(
+            parser_ok=False,
+            notes=[
+                f"junit report root is <{_local(root.tag)}>, not <testsuite> "
+                "or <testsuites>; unexpected format"
+            ],
+        )
 
-    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    suites = [root] if _local(root.tag) == "testsuite" else _named(root, "testsuite")
     counts = dict.fromkeys(_COUNT_KEYS, 0)
     for suite in suites:
         for key in _COUNT_KEYS:
@@ -48,7 +71,7 @@ def parse_junit(junit_text: str, max_snippet_lines: int) -> ParseResult:
                 counts[key] += int(suite.get(key, 0) or 0)
 
     findings: list[Finding] = []
-    for case in root.iter("testcase"):
+    for case in _named(root, "testcase"):
         classname = case.get("classname") or ""
         name = case.get("name") or ""
         nodeid = f"{classname}::{name}" if classname else name
@@ -58,12 +81,13 @@ def parse_junit(junit_text: str, max_snippet_lines: int) -> ParseResult:
         if file_attr:
             location = f"{file_attr}:{line_attr}" if line_attr else file_attr
         for node in case:
-            if node.tag not in ("failure", "error"):
+            tag = _local(node.tag)
+            if tag not in ("failure", "error"):
                 continue
             findings.append(
                 Finding(
                     id=nodeid,
-                    kind="test_error" if node.tag == "error" else "test_failure",
+                    kind="test_error" if tag == "error" else "test_failure",
                     message=(node.get("message") or "").strip()[:400],
                     location=location,
                     detail=_snippet(node.text or "", max_snippet_lines),
