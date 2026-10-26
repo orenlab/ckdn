@@ -23,13 +23,13 @@ Optional ``score_fail_under`` gate mirrors coverage's ``fail_under``.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from ckdn.parsers.base import (
     Finding,
     ParseContext,
     ParseResult,
+    finite_number,
     format_location,
     load_json_artifact,
     top_counts,
@@ -164,16 +164,11 @@ class PylintJsonParser:
         if skip_note is not None:
             result.notes.append(skip_note)
             return
-        assert threshold is not None and score is not None
-        try:
-            score_f = float(score)
-            under = float(threshold)
-        except (TypeError, ValueError):
-            result.parser_ok = False
-            result.notes.append("pylint score or score_fail_under is not numeric")
-            return
-        if not (math.isfinite(score_f) and math.isfinite(under)):
-            # NaN compares false against everything: the gate would never fire.
+        score_f = finite_number(score)
+        under = finite_number(threshold)
+        if score_f is None or under is None:
+            # NaN compares false against everything, and `false` would mean 0:
+            # either way the gate would never fire.
             result.parser_ok = False
             result.notes.append(
                 "pylint score or score_fail_under is not a finite number"

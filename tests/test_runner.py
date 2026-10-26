@@ -543,6 +543,24 @@ def _finished(run_dir: Path) -> Path:
     return run_dir
 
 
+@pytest.mark.parametrize("torn", [b"{", b"", b"[1, 2]", b"\xff\xfe"])
+def test_prune_keeps_a_run_whose_digest_is_not_a_document(
+    tmp_path: Path, torn: bytes
+) -> None:
+    """Presence of the file used to be enough: a torn `{` was taken for a
+    finished run, and its full.log went with it."""
+    runs = tmp_path / "runs"
+    old = runs / "20260101T000000Z-old"
+    new = runs / "20260101T000001Z-new"
+    for run_dir in (old, new):
+        run_dir.mkdir(parents=True)
+        (run_dir / LOG_NAME).write_text("evidence", encoding="utf-8")
+    (old / DIGEST_NAME).write_bytes(torn)
+    _finished(new)
+    assert prune(runs, keep=1) == 0
+    assert (old / LOG_NAME).read_text(encoding="utf-8") == "evidence"
+
+
 def test_list_and_prune(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     assert list_run_dirs(runs) == []
